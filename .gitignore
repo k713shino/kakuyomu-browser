@@ -1,33 +1,75 @@
-# Logs
-logs
-*.log
+# =========================
+# Node / npm
+# =========================
+node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-dist-electron
-release
-*.local
+# =========================
+# Build outputs
+# =========================
+dist/
+dist-*/
+build/
+release/
 
-# Editor directories and files
-.vscode/.debug.env
-.idea
+# Electron (packaged apps)
+out/
+app/
+*.exe
+*.dmg
+*.AppImage
+
+# =========================
+# Vite
+# =========================
+.vite/
+
+# =========================
+# Environment variables
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# OS / Editor
+# =========================
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+Thumbs.db
+desktop.ini
 
-#lockfile
-package-lock.json
-pnpm-lock.yaml
-yarn.lock
-/test-results/
-/playwright-report/
-/playwright/.cache/
+.vscode/
+!.vscode/extensions.json
+
+.idea/
+*.swp
+*.swo
+
+# =========================
+# TypeScript
+# =========================
+*.tsbuildinfo
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+
+# =========================
+# Electron cache / user data
+# =========================
+userData/
+cache/
+GPUCache/
+
+# =========================
+# Temporary / backup files
+# =========================
+tmp/
+temp/
+*.bak
+*.old
