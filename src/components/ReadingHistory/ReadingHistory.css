@@ -1,0 +1,212 @@
+.reading-history-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.reading-history-modal {
+  background-color: #2a2a2a;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 800px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  z-index: 1001;
+  position: relative;
+}
+
+.reading-history-header {
+  padding: 20px;
+  border-bottom: 1px solid #444;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.reading-history-header h2 {
+  margin: 0;
+  font-size: 20px;
+  color: #ffffff;
+}
+
+.reading-history-header-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.clear-all-button {
+  padding: 6px 12px;
+  background-color: #dc3545;
+  border: none;
+  border-radius: 4px;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.clear-all-button:hover {
+  background-color: #c82333;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+}
+
+.close-button:hover {
+  color: #fff;
+}
+
+.reading-history-content {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.loading-state {
+  text-align: center;
+  padding: 40px;
+  color: #999;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #999;
+}
+
+.empty-state svg {
+  margin-bottom: 16px;
+  color: #666;
+}
+
+.empty-state p {
+  margin: 8px 0;
+}
+
+.empty-state-hint {
+  font-size: 14px;
+  color: #666;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.history-item {
+  background-color: #333;
+  border-radius: 6px;
+  padding: 16px;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+.history-item:hover {
+  background-color: #3a3a3a;
+  transform: translateY(-1px);
+}
+
+.history-item:active {
+  transform: translateY(0);
+}
+
+.history-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.history-item-title {
+  margin: 0;
+  font-size: 16px;
+  color: #ffffff;
+  font-weight: 600;
+  flex: 1;
+  padding-right: 12px;
+}
+
+.delete-button {
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+  flex-shrink: 0;
+}
+
+.delete-button:hover {
+  color: #dc3545;
+}
+
+.history-item-episode {
+  font-size: 14px;
+  color: #bbb;
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+
+.history-item-meta {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.history-item-date,
+.history-item-count,
+.history-item-bookmark {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #888;
+}
+
+.history-item-bookmark {
+  color: #ffc107;
+}
+
+/* スクロールバーのスタイル */
+.reading-history-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.reading-history-content::-webkit-scrollbar-track {
+  background: #2a2a2a;
+}
+
+.reading-history-content::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 4px;
+}
+
+.reading-history-content::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}
