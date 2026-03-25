@@ -14,7 +14,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder",
+    "build": "tsc && vite build && electron-builder --dir --publish never",
+    "build:installer": "tsc && vite build && electron-builder --win nsis --x64 --publish never",
     "preview": "vite preview",
     "pretest": "vite build --mode=test",
     "test": "vitest run"
