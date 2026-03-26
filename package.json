@@ -1,6 +1,6 @@
 {
   "name": "kakuyomu-browser",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "main": "dist-electron/main/index.js",
   "description": "Kakuyomu Browser - カクヨム専用ブラウザアプリケーション",
   "author": "k713shino <shino.techno@gmail.com>",

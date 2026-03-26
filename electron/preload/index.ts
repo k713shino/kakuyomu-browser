@@ -1,4 +1,5 @@
 import { ipcRenderer, contextBridge } from 'electron'
+import type { DisplaySettings } from '../../src/type/display-settings'
 
 // --------- Expose some API to the Renderer process ---------
 contextBridge.exposeInMainWorld('ipcRenderer', {
@@ -51,6 +52,12 @@ contextBridge.exposeInMainWorld('readingHistory', {
   clearHistory: () => ipcRenderer.invoke('reading-history:clear'),
   updateScrollPosition: (id: string, position: number) =>
     ipcRenderer.invoke('reading-history:update-scroll', id, position),
+})
+
+contextBridge.exposeInMainWorld('displaySettings', {
+  get: () => ipcRenderer.invoke('display-settings:get'),
+  update: (settings: Partial<DisplaySettings>) => ipcRenderer.invoke('display-settings:update', settings),
+  reset: () => ipcRenderer.invoke('display-settings:reset'),
 })
 
 // --------- Preload scripts loading ---------

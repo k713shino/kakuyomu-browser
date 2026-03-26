@@ -6,6 +6,7 @@ import {
   PanelRight,
   HelpCircle,
   BookOpen,
+  Type,
 } from 'lucide-react'
 import type { RefObject } from 'react'
 import { QuickLinksDropdown } from './QuickLinks/QuickLinksDropdown'
@@ -26,6 +27,7 @@ interface BrowserHeaderProps {
   onOpenSettings: () => void
   onToggleSidebar: () => void
   onOpenHistory: () => void
+  onOpenDisplaySettings: () => void
   onOpenAbout: () => void
 }
 
@@ -44,6 +46,7 @@ export function BrowserHeader({
   onOpenSettings,
   onToggleSidebar,
   onOpenHistory,
+  onOpenDisplaySettings,
   onOpenAbout,
 }: BrowserHeaderProps) {
   return (
@@ -80,6 +83,14 @@ export function BrowserHeader({
           currentUrl={currentUrl}
           currentTitle={currentTitle}
         />
+        <button
+          type="button"
+          onClick={onOpenDisplaySettings}
+          className="icon-button"
+          title="表示カスタマイズ"
+        >
+          <Type size={20} />
+        </button>
         <button
           type="button"
           onClick={onToggleSidebar}

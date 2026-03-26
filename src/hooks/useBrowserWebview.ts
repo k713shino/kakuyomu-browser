@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { extractWorkId, HOME_URL, isKakuyomuWorkUrl } from '../lib/browser'
-import { getSafePageTitle, injectAdBlocker } from '../lib/webview'
+import { applyDisplaySettings, getSafePageTitle, injectAdBlocker } from '../lib/webview'
 import type { BrowserWebview } from '../lib/webview'
 
 export const useBrowserWebview = () => {
@@ -30,7 +30,7 @@ export const useBrowserWebview = () => {
     const handleDidNavigate = () => {
       syncNavigationState()
       void refreshPageTitle(webview)
-      injectAdBlocker(webview)
+      void syncDisplaySettings(webview)
     }
 
     const handleDidStopLoading = async () => {
@@ -38,7 +38,7 @@ export const useBrowserWebview = () => {
       syncNavigationState()
 
       const title = await refreshPageTitle(webview)
-      injectAdBlocker(webview)
+      await syncDisplaySettings(webview)
       await saveReadingHistory(webview, title)
       await restoreScrollPosition(webview)
     }
@@ -60,6 +60,17 @@ export const useBrowserWebview = () => {
     const title = await getSafePageTitle(webview)
     setPageTitle(title)
     return title
+  }
+
+  const syncDisplaySettings = async (webview: BrowserWebview) => {
+    try {
+      const settings = await window.displaySettings.get()
+      const currentUrl = webview.getURL()
+      await applyDisplaySettings(webview, settings, currentUrl)
+    } catch (error) {
+      console.error('Failed to sync display settings:', error)
+      injectAdBlocker(webview)
+    }
   }
 
   const saveReadingHistory = async (webview: BrowserWebview, title: string) => {
@@ -137,6 +148,12 @@ export const useBrowserWebview = () => {
     webviewRef.current?.loadURL(targetUrl)
   }
 
+  const refreshDisplaySettings = async () => {
+    if (webviewRef.current) {
+      await syncDisplaySettings(webviewRef.current)
+    }
+  }
+
   return {
     webviewRef,
     canGoBack,
@@ -148,6 +165,7 @@ export const useBrowserWebview = () => {
     reload,
     goHome,
     pageTitle,
+    refreshDisplaySettings,
     url,
   }
 }

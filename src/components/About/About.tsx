@@ -23,7 +23,7 @@ export const About = ({ isOpen, onClose }: AboutProps) => {
         <div className="about-content">
           <div className="about-section">
             <h3>バージョン情報</h3>
-            <p className="about-version">Version 0.1.0 (初期開発版)</p>
+            <p className="about-version">Version 0.2.0</p>
             <p className="about-description">
               カクヨム専用ブラウザアプリケーション
             </p>
@@ -61,9 +61,13 @@ export const About = ({ isOpen, onClose }: AboutProps) => {
             <ul className="features-list">
               <li>カクヨム専用ブラウジング</li>
               <li>広告ブロック機能</li>
-              <li>クイックリンク管理（フォルダ対応）</li>
-              <li>クイックリンクのエクスポート/インポート</li>
-              <li>ドラッグ&ドロップでのリンク整理</li>
+              <li>クイックリンク管理（フォルダ、検索、エクスポート/インポート対応）</li>
+              <li>読書履歴の保存、検索、フィルタ</li>
+              <li>キーボードショートカット</li>
+              <li>表示カスタマイズ（広告ブロック、本文幅、文字サイズ）</li>
+              <li>縦組み表示のレイアウト補正</li>
+              <li>タブ機能（追加、並び替え、複製、終了時復元）</li>
+              <li>タブの右クリックメニュー（右側を閉じる、すべて閉じる）</li>
               <li>サイドバー表示</li>
             </ul>
           </div>

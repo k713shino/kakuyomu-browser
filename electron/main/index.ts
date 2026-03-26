@@ -5,6 +5,7 @@ import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
 import { update } from './update'
+import type { DisplaySettings } from '../../src/type/display-settings'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -307,6 +308,39 @@ interface ReadingHistoryData {
 }
 
 const readingHistoryPath = path.join(app.getPath('userData'), 'reading-history.json')
+const displaySettingsPath = path.join(app.getPath('userData'), 'display-settings.json')
+
+const defaultDisplaySettings: DisplaySettings = {
+  adBlockEnabled: true,
+  readerWidth: 'comfortable',
+  readerFontSize: 'medium',
+}
+
+function loadDisplaySettings(): DisplaySettings {
+  try {
+    if (fs.existsSync(displaySettingsPath)) {
+      const data = fs.readFileSync(displaySettingsPath, 'utf-8')
+      return {
+        ...defaultDisplaySettings,
+        ...JSON.parse(data),
+      }
+    }
+
+    saveDisplaySettings(defaultDisplaySettings)
+    return defaultDisplaySettings
+  } catch (error) {
+    console.error('Failed to load display settings:', error)
+    return defaultDisplaySettings
+  }
+}
+
+function saveDisplaySettings(settings: DisplaySettings): void {
+  try {
+    fs.writeFileSync(displaySettingsPath, JSON.stringify(settings, null, 2), 'utf-8')
+  } catch (error) {
+    console.error('Failed to save display settings:', error)
+  }
+}
 
 function loadReadingHistoryData(): ReadingHistoryData {
   try {
@@ -423,4 +457,22 @@ ipcMain.handle('reading-history:update-scroll', (_, id: string, position: number
   }
 
   return false
+})
+
+ipcMain.handle('display-settings:get', () => {
+  return loadDisplaySettings()
+})
+
+ipcMain.handle('display-settings:update', (_, settings: Partial<DisplaySettings>) => {
+  const mergedSettings = {
+    ...loadDisplaySettings(),
+    ...settings,
+  }
+  saveDisplaySettings(mergedSettings)
+  return mergedSettings
+})
+
+ipcMain.handle('display-settings:reset', () => {
+  saveDisplaySettings(defaultDisplaySettings)
+  return defaultDisplaySettings
 })

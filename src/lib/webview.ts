@@ -1,4 +1,5 @@
 export type BrowserWebview = Electron.WebviewTag
+import type { DisplaySettings } from '../type/display-settings'
 
 export const getSafePageTitle = async (webview: BrowserWebview) => {
   try {
@@ -150,4 +151,106 @@ export const injectAdBlocker = (webview: BrowserWebview) => {
   `).catch((error: unknown) => {
     console.error('Failed to inject ad blocker script:', error)
   })
+}
+
+const readerWidthMap: Record<DisplaySettings['readerWidth'], string> = {
+  compact: '720px',
+  comfortable: '860px',
+  wide: '1040px',
+}
+
+const readerFontSizeMap: Record<DisplaySettings['readerFontSize'], string> = {
+  small: '15px',
+  medium: '17px',
+  large: '19px',
+}
+
+export const applyDisplaySettings = async (
+  webview: BrowserWebview,
+  settings: DisplaySettings,
+  currentUrl: string,
+) => {
+  if (settings.adBlockEnabled) {
+    injectAdBlocker(webview)
+  }
+
+  const isReaderPage = currentUrl.includes('kakuyomu.jp/works/')
+  if (!isReaderPage) {
+    return
+  }
+
+  const maxWidth = readerWidthMap[settings.readerWidth]
+  const fontSize = readerFontSizeMap[settings.readerFontSize]
+
+  await webview
+    .executeJavaScript(`
+      (function() {
+        const styleId = 'kakuyomu-browser-display-settings';
+        let style = document.getElementById(styleId);
+        if (!style) {
+          style = document.createElement('style');
+          style.id = styleId;
+          document.head.appendChild(style);
+        }
+
+        const episodeBody =
+          document.querySelector('.widget-episodeBody') ||
+          document.querySelector('.widget-workEpisode');
+        const writingMode = episodeBody ? getComputedStyle(episodeBody).writingMode : '';
+        const isVertical = writingMode.startsWith('vertical');
+
+        style.textContent = isVertical
+          ? \`
+              .widget-episodeBody,
+              .widget-episodeBody-inner,
+              .widget-workEpisode,
+              .widget-workEpisode-inner {
+                padding-inline-end: 72px !important;
+              }
+
+              .widget-episodeBody p,
+              .widget-episodeBody-inner p,
+              .widget-episodeBody li,
+              .widget-episodeBody-inner li,
+              .widget-episodeBody blockquote,
+              .widget-episodeBody-inner blockquote,
+              .widget-workEpisode p,
+              .widget-workEpisode-inner p,
+              .widget-workEpisode li,
+              .widget-workEpisode-inner li,
+              .widget-workEpisode blockquote,
+              .widget-workEpisode-inner blockquote {
+                font-size: ${fontSize} !important;
+                line-height: 2 !important;
+              }
+            \`
+          : \`
+              .widget-episodeBody,
+              .widget-episodeBody-inner,
+              .widget-workEpisode,
+              .widget-workEpisode-inner {
+                max-width: ${maxWidth} !important;
+              }
+
+              .widget-episodeBody p,
+              .widget-episodeBody-inner p,
+              .widget-episodeBody li,
+              .widget-episodeBody-inner li,
+              .widget-episodeBody blockquote,
+              .widget-episodeBody-inner blockquote,
+              .widget-workEpisode p,
+              .widget-workEpisode-inner p,
+              .widget-workEpisode li,
+              .widget-workEpisode-inner li,
+              .widget-workEpisode blockquote,
+              .widget-workEpisode-inner blockquote {
+                font-size: ${fontSize} !important;
+                line-height: 2 !important;
+              }
+            \`;
+      })();
+    `)
+    .catch((error: unknown) => {
+      console.error('Failed to apply display settings:', error)
+    })
 }
