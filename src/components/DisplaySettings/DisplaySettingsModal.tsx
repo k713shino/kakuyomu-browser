@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Type, X, RectangleHorizontal, Text, AudioLines } from 'lucide-react'
+import { Type, X, RectangleHorizontal, Text, AudioLines, BookOpenCheck } from 'lucide-react'
 import { extractWorkId, isKakuyomuWorkUrl } from '../../lib/browser'
 import type { DisplaySettings, ReaderFontSize, ReaderWidth } from '../../type/display-settings'
 import './DisplaySettingsModal.css'
@@ -37,6 +37,7 @@ export function DisplaySettingsModal({
 }: DisplaySettingsModalProps) {
   const [settings, setSettings] = useState<DisplaySettings>({
     adBlockEnabled: true,
+    autoReadEnabled: false,
     readerWidth: 'comfortable',
     readerFontSize: 'medium',
     speechSpeed: 1.05,
@@ -309,6 +310,24 @@ export function DisplaySettingsModal({
                 type="checkbox"
                 checked={settings.adBlockEnabled}
                 onChange={event => void updateSettings({ adBlockEnabled: event.target.checked })}
+              />
+            </label>
+          </section>
+
+          <section className="display-settings-card">
+            <div className="display-settings-card-header">
+              <BookOpenCheck size={16} />
+              <h3>連続読み</h3>
+            </div>
+            <label className="display-settings-toggle">
+              <div>
+                <strong>エピソード末尾で次話へ自動移動</strong>
+                <p>ページ末尾までスクロールすると、次のエピソードへ自動で移動します。</p>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.autoReadEnabled}
+                onChange={event => void updateSettings({ autoReadEnabled: event.target.checked })}
               />
             </label>
           </section>

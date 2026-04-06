@@ -4,6 +4,15 @@ export interface QuickLink {
   url: string
   order: number
   folderId?: string | null
+  tags?: string[]
+  workId?: string | null
+  lastCheckedAt?: number | null
+  lastKnownEpisodeId?: string | null
+  lastKnownEpisodeTitle?: string | null
+  lastKnownEpisodeUrl?: string | null
+  lastKnownEpisodePublishedAt?: string | null
+  totalEpisodes?: number | null
+  unreadEpisodeCount?: number
 }
 
 export interface QuickLinkFolder {
@@ -20,10 +29,11 @@ export interface QuickLinksData {
 
 export interface QuickLinksAPI {
   get: () => Promise<QuickLinksData>
-  add: (link: { title: string; url: string; folderId?: string | null }) => Promise<QuickLink>
+  add: (link: { title: string; url: string; folderId?: string | null; tags?: string[] }) => Promise<QuickLink>
   update: (link: QuickLink) => Promise<boolean>
   delete: (id: string) => Promise<boolean>
   reorder: (links: QuickLink[]) => Promise<boolean>
+  checkUpdates: () => Promise<QuickLink[]>
 
   // Folder operations
   getFolders: () => Promise<QuickLinkFolder[]>

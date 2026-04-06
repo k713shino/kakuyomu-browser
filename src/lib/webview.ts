@@ -389,6 +389,129 @@ export const clearSpeechParagraphHighlights = async (webview: BrowserWebview): P
   }
 }
 
+/**
+ * ページが末尾付近かどうか判定する。
+ *
+ * 縦組み／横組みの判定は scrollWidth の大小ではなく、エピソード要素の
+ * CSS writing-mode を直接確認する。カクヨムのページはヘッダー・フッターで
+ * scrollHeight が常に innerHeight より大きいため、寸法比較での推測は不正確。
+ *
+ * 縦組み（writing-mode: vertical-rl）:
+ *   ページが横スクロール。右端 = 読み始め、左端（scrollLeft ≈ 0）= 読み終わり。
+ * 横組み:
+ *   ページが縦スクロール。下端（scrollTop + innerHeight ≈ scrollHeight）= 読み終わり。
+ */
+/**
+ * ページが末尾付近かどうか判定する。
+ *
+ * 縦組み（writing-mode: vertical-rl）:
+ *   scrollLeft の初期値・方向はブラウザ実装によってばらつくため使わない。
+ *   代わりに最後の段落要素の getBoundingClientRect().left を使う。
+ *   - 読み始め（右端表示）: 最後の段落は画面外左に大きく外れている（rect.left << 0）
+ *   - 読み進めると rect.left が 0 に近づく
+ *   - rect.left >= -MARGIN になったら読み終わりとみなす
+ *
+ * 横組み（縦スクロール）:
+ *   scrollTop + innerHeight >= scrollHeight - MARGIN で判定。
+ *   ページ未レンダリング時（scrollHeight が小さい）はスキップ。
+ */
+export const checkIsNearPageBottom = async (webview: BrowserWebview): Promise<boolean> => {
+  try {
+    return await webview.executeJavaScript(`
+      (function() {
+        const MARGIN = 200;
+
+        // エピソードコンテナの writing-mode を直接確認
+        const episodeEl =
+          document.querySelector('.widget-episodeBody') ||
+          document.querySelector('.widget-workEpisode');
+        const writingMode = episodeEl
+          ? (getComputedStyle(episodeEl).writingMode || '')
+          : '';
+        const isVertical = writingMode.startsWith('vertical');
+
+        if (isVertical) {
+          // 縦組み: 最後の段落が見えただけでは早すぎるため、本文末尾に一時マーカーを
+          // 置いて終端位置そのものを測る。Range の終端座標は環境差が出やすいため、
+          // 実 DOM 要素の矩形で判定する。
+          if (!episodeEl) return false;
+          const marker = document.createElement('span');
+          marker.setAttribute('data-kakuyomu-browser-end-marker', 'true');
+          marker.setAttribute(
+            'style',
+            'display:inline-block;width:1px;height:1em;padding:0;margin:0;border:0;opacity:0;pointer-events:none;'
+          );
+
+          episodeEl.appendChild(marker);
+          const rect = marker.getBoundingClientRect();
+          marker.remove();
+
+          if (!rect || (!rect.width && !rect.height)) {
+            return false;
+          }
+
+          // 読み終わりでは終端マーカーが最終列の下端付近かつ左端付近まで移動する。
+          const isNearLeftEdge = rect.left >= -MARGIN;
+          const isNearBottomEdge = rect.top <= window.innerHeight + MARGIN;
+          return isNearLeftEdge && isNearBottomEdge;
+        }
+
+        // 横組み（縦スクロール）
+        const scrollEl = document.scrollingElement || document.documentElement;
+        const scrollHeight = scrollEl.scrollHeight;
+        const innerHeight = window.innerHeight;
+        // ページ未レンダリング時はスキップ
+        if (scrollHeight < innerHeight + 500) return false;
+        const scrollTop = scrollEl.scrollTop;
+        return scrollTop + innerHeight >= scrollHeight - MARGIN;
+      })()
+    `)
+  } catch (error) {
+    console.error('Failed to check page bottom:', error)
+    return false
+  }
+}
+
+/**
+ * 次のエピソードのURLを取得する。
+ * link[rel="next"] を最優先にし、フォールバックとしてナビゲーションリンクを探す。
+ */
+export const getNextEpisodeUrl = async (webview: BrowserWebview): Promise<string | null> => {
+  try {
+    const url = await webview.executeJavaScript(`
+      (function() {
+        // 最優先: <link rel="next"> (SEO用メタリンク)
+        const relNext = document.querySelector('link[rel="next"]');
+        if (relNext && relNext.href) {
+          return relNext.href;
+        }
+
+        // フォールバック: エピソードナビゲーション内の「次へ」リンク
+        const navSelectors = [
+          'a[href*="/episodes/"][rel="next"]',
+          '.widget-episodeNavigation a[href*="/episodes/"]:last-child',
+          '.widget-pager-next a[href*="/episodes/"]',
+          'a.widget-pager-next[href*="/episodes/"]',
+        ];
+
+        for (const selector of navSelectors) {
+          const el = document.querySelector(selector);
+          if (el && el.href && el.href.includes('/episodes/')) {
+            return el.href;
+          }
+        }
+
+        return null;
+      })()
+    `)
+
+    return typeof url === 'string' ? url : null
+  } catch (error) {
+    console.error('Failed to get next episode URL:', error)
+    return null
+  }
+}
+
 export const getSelectedText = async (webview: BrowserWebview): Promise<string> => {
   try {
     const selectedText = await webview.executeJavaScript(`

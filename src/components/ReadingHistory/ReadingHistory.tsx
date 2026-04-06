@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
-import { X, Trash2, Clock, BookOpen, Bookmark, Search } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { X, Trash2, Clock, BookOpen, Bookmark, Search, CheckCheck, ChevronDown, ChevronRight, BellRing } from 'lucide-react'
+import type { EpisodeCompletionItem } from '../../type/episode-completion'
+import type { QuickLink } from '../../type/quick-links'
 import { ReadingHistoryItem } from '../../type/reading-history'
 import './ReadingHistory.css'
 
@@ -20,6 +22,9 @@ const FILTER_LABELS: Record<HistoryFilter, string> = {
 
 export function ReadingHistory({ isOpen, onClose, onNavigate }: ReadingHistoryProps) {
   const [history, setHistory] = useState<ReadingHistoryItem[]>([])
+  const [quickLinksByWorkId, setQuickLinksByWorkId] = useState<Record<string, QuickLink>>({})
+  const [completionMap, setCompletionMap] = useState<Record<string, EpisodeCompletionItem>>({})
+  const [expandedWorkIds, setExpandedWorkIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [activeFilter, setActiveFilter] = useState<HistoryFilter>('all')
@@ -27,8 +32,26 @@ export function ReadingHistory({ isOpen, onClose, onNavigate }: ReadingHistoryPr
   const loadHistory = async () => {
     try {
       setLoading(true)
-      const items = await window.readingHistory.getHistory()
+      const [items, completionItems, quickLinksData] = await Promise.all([
+        window.readingHistory.getHistory(),
+        window.episodeCompletion.getAll(),
+        window.quickLinks.get(),
+      ])
       setHistory(items)
+
+      const completionLookup: Record<string, EpisodeCompletionItem> = {}
+      completionItems.forEach(item => {
+        completionLookup[item.workId] = item
+      })
+      setCompletionMap(completionLookup)
+
+      const quickLinkLookup: Record<string, QuickLink> = {}
+      quickLinksData.links.forEach(link => {
+        if (link.workId) {
+          quickLinkLookup[link.workId] = link
+        }
+      })
+      setQuickLinksByWorkId(quickLinkLookup)
     } catch (error) {
       console.error('Failed to load reading history:', error)
     } finally {
@@ -44,30 +67,53 @@ export function ReadingHistory({ isOpen, onClose, onNavigate }: ReadingHistoryPr
 
   const handleDelete = async (id: string, event: React.MouseEvent) => {
     event.stopPropagation()
-    if (confirm('この履歴を削除しますか？')) {
-      try {
-        await window.readingHistory.deleteHistory(id)
-        await loadHistory()
-      } catch (error) {
-        console.error('Failed to delete history:', error)
-      }
+    if (!confirm('この履歴を削除しますか？')) return
+    try {
+      await window.readingHistory.deleteHistory(id)
+      await loadHistory()
+    } catch (error) {
+      console.error('Failed to delete history:', error)
     }
+  }
+
+  const handleUnmarkEpisode = async (workId: string, episodeId: string, event: React.MouseEvent) => {
+    event.stopPropagation()
+    try {
+      await window.episodeCompletion.unmark(workId, episodeId)
+      setCompletionMap(prev => {
+        const item = prev[workId]
+        if (!item) return prev
+        return {
+          ...prev,
+          [workId]: {
+            ...item,
+            completedEpisodes: item.completedEpisodes.filter(ep => ep.episodeId !== episodeId),
+          },
+        }
+      })
+    } catch (error) {
+      console.error('Failed to unmark episode:', error)
+    }
+  }
+
+  const toggleEpisodeList = (workId: string, event: React.MouseEvent) => {
+    event.stopPropagation()
+    setExpandedWorkIds(prev => {
+      const next = new Set(prev)
+      if (next.has(workId)) next.delete(workId)
+      else next.add(workId)
+      return next
+    })
   }
 
   const handleClearAll = async () => {
-    if (confirm('すべての履歴を削除しますか？')) {
-      try {
-        await window.readingHistory.clearHistory()
-        await loadHistory()
-      } catch (error) {
-        console.error('Failed to clear history:', error)
-      }
+    if (!confirm('すべての履歴を削除しますか？')) return
+    try {
+      await window.readingHistory.clearHistory()
+      await loadHistory()
+    } catch (error) {
+      console.error('Failed to clear history:', error)
     }
-  }
-
-  const handleOpenHistory = (item: ReadingHistoryItem) => {
-    onNavigate(item.lastReadUrl)
-    onClose()
   }
 
   const formatDate = (timestamp: number) => {
@@ -75,47 +121,29 @@ export function ReadingHistory({ isOpen, onClose, onNavigate }: ReadingHistoryPr
     const now = new Date()
     const diff = now.getTime() - date.getTime()
     const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-
-    if (days === 0) {
-      return '今日'
-    }
-    if (days === 1) {
-      return '昨日'
-    }
-    if (days < 7) {
-      return `${days}日前`
-    }
-
+    if (days === 0) return '今日'
+    if (days === 1) return '昨日'
+    if (days < 7) return `${days}日前`
     return date.toLocaleDateString('ja-JP')
   }
 
   const normalizedQuery = searchQuery.trim().toLowerCase()
-  const filteredHistory = history.filter(item => {
-    const matchesQuery =
-      normalizedQuery.length === 0 ||
-      item.title.toLowerCase().includes(normalizedQuery) ||
-      item.author.toLowerCase().includes(normalizedQuery) ||
-      item.lastReadEpisodeTitle.toLowerCase().includes(normalizedQuery)
-
-    if (!matchesQuery) {
-      return false
-    }
-
-    if (activeFilter === 'bookmark') {
-      return item.scrollPosition !== undefined
-    }
-
-    if (activeFilter === 'recent') {
-      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
-      return item.lastReadAt >= sevenDaysAgo
-    }
-
-    if (activeFilter === 'frequent') {
-      return item.readCount >= 2
-    }
-
-    return true
-  })
+  const filteredHistory = useMemo(
+    () =>
+      history.filter(item => {
+        const matchesQuery =
+          normalizedQuery.length === 0 ||
+          item.title.toLowerCase().includes(normalizedQuery) ||
+          item.author.toLowerCase().includes(normalizedQuery) ||
+          item.lastReadEpisodeTitle.toLowerCase().includes(normalizedQuery)
+        if (!matchesQuery) return false
+        if (activeFilter === 'bookmark') return item.scrollPosition !== undefined
+        if (activeFilter === 'recent') return item.lastReadAt >= Date.now() - 7 * 24 * 60 * 60 * 1000
+        if (activeFilter === 'frequent') return item.readCount >= 2
+        return true
+      }),
+    [activeFilter, history, normalizedQuery],
+  )
 
   const hasActiveConditions = normalizedQuery.length > 0 || activeFilter !== 'all'
 
@@ -164,7 +192,7 @@ export function ReadingHistory({ isOpen, onClose, onNavigate }: ReadingHistoryPr
                   />
                 </label>
 
-                <div className="history-filters" role="tablist" aria-label="読書履歴の絞り込み">
+                <div className="history-filters" role="group" aria-label="読書履歴の絞り込み">
                   {(Object.keys(FILTER_LABELS) as HistoryFilter[]).map(filter => (
                     <button
                       key={filter}
@@ -202,44 +230,92 @@ export function ReadingHistory({ isOpen, onClose, onNavigate }: ReadingHistoryPr
                 </div>
               ) : (
                 <div className="history-list">
-                  {filteredHistory.map(item => (
-                    <div
-                      key={item.id}
-                      className="history-item"
-                      onClick={() => handleOpenHistory(item)}
-                    >
-                      <div className="history-item-header">
-                        <div className="history-item-heading">
-                          <h3 className="history-item-title">{item.title}</h3>
-                          {item.author && <div className="history-item-author">{item.author}</div>}
+                  {filteredHistory.map(item => {
+                    const completion = completionMap[item.id]
+                    const completedCount = completion?.completedEpisodes.length ?? 0
+                    const link = quickLinksByWorkId[item.id]
+                    const totalEpisodes = link?.totalEpisodes ?? null
+                    const unreadCount = link?.unreadEpisodeCount ?? 0
+                    const isExpanded = expandedWorkIds.has(item.id)
+
+                    return (
+                      <div key={item.id} className="history-item" onClick={() => { onNavigate(item.lastReadUrl); onClose() }}>
+                        <div className="history-item-header">
+                          <div className="history-item-heading">
+                            <h3 className="history-item-title">{item.title}</h3>
+                            {item.author && <div className="history-item-author">{item.author}</div>}
+                          </div>
+                          <button type="button" className="delete-button" onClick={event => handleDelete(item.id, event)} title="削除">
+                            <Trash2 size={16} />
+                          </button>
                         </div>
-                        <button
-                          className="delete-button"
-                          onClick={event => handleDelete(item.id, event)}
-                          title="削除"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                      <div className="history-item-episode">{item.lastReadEpisodeTitle}</div>
-                      <div className="history-item-meta">
-                        <span className="history-item-date">
-                          <Clock size={14} />
-                          {formatDate(item.lastReadAt)}
-                        </span>
-                        <span className="history-item-count">
-                          <BookOpen size={14} />
-                          {item.readCount}回
-                        </span>
-                        {item.scrollPosition !== undefined && (
-                          <span className="history-item-bookmark">
-                            <Bookmark size={14} />
-                            しおりあり
-                          </span>
+
+                        <div className="history-item-episode">{item.lastReadEpisodeTitle}</div>
+
+                        {(totalEpisodes !== null || unreadCount > 0) && (
+                          <div className="history-progress-row">
+                            {totalEpisodes !== null && (
+                              <div className="history-progress-pill">
+                                読書進捗: {completedCount}/{totalEpisodes}話
+                              </div>
+                            )}
+                            {unreadCount > 0 && (
+                              <div className="history-unread-pill">
+                                <BellRing size={13} />
+                                新着 {unreadCount}話
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="history-item-meta">
+                          <span className="history-item-date"><Clock size={14} />{formatDate(item.lastReadAt)}</span>
+                          <span className="history-item-count"><BookOpen size={14} />{item.readCount}回</span>
+                          {item.scrollPosition !== undefined && <span className="history-item-bookmark"><Bookmark size={14} />しおりあり</span>}
+                          {completedCount > 0 && (
+                            <button
+                              type="button"
+                              className={`history-item-completed-badge ${isExpanded ? 'active' : ''}`}
+                              onClick={event => toggleEpisodeList(item.id, event)}
+                              title="読了エピソード一覧"
+                            >
+                              <CheckCheck size={14} />
+                              {completedCount}話読了
+                              {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                            </button>
+                          )}
+                        </div>
+
+                        {isExpanded && completion && (
+                          <div className="history-item-episodes" onClick={event => event.stopPropagation()}>
+                            {[...completion.completedEpisodes].sort((a, b) => b.completedAt - a.completedAt).map(ep => (
+                              <div key={ep.episodeId} className="history-episode-row">
+                                <button
+                                  type="button"
+                                  className="history-episode-title"
+                                  onClick={() => {
+                                    onNavigate(ep.episodeUrl)
+                                    onClose()
+                                  }}
+                                  title={ep.episodeTitle}
+                                >
+                                  {ep.episodeTitle}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="history-episode-unmark"
+                                  onClick={event => handleUnmarkEpisode(item.id, ep.episodeId, event)}
+                                  title="読了を取り消す"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </>

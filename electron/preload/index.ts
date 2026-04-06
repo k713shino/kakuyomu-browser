@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('quickLinks', {
   update: (link: any) => ipcRenderer.invoke('quick-links:update', link),
   delete: (id: string) => ipcRenderer.invoke('quick-links:delete', id),
   reorder: (links: any[]) => ipcRenderer.invoke('quick-links:reorder', links),
+  checkUpdates: () => ipcRenderer.invoke('quick-links:check-updates'),
 
   // Folder operations
   getFolders: () => ipcRenderer.invoke('quick-links:get-folders'),
@@ -68,6 +69,24 @@ contextBridge.exposeInMainWorld('aivisSpeech', {
     ipcRenderer.invoke('aivis-speech:prepare', payload),
   synthesizeChunk: (payload: { chunk: string; styleId: number; speedScale: number; intonationScale: number }) =>
     ipcRenderer.invoke('aivis-speech:synthesize-chunk', payload),
+})
+
+contextBridge.exposeInMainWorld('episodeCompletion', {
+  getAll: () => ipcRenderer.invoke('episode-completion:get-all'),
+  getByWorkId: (workId: string) => ipcRenderer.invoke('episode-completion:get-by-work', workId),
+  mark: (data: {
+    workId: string
+    workTitle: string
+    workUrl: string
+    episodeId: string
+    episodeTitle: string
+    episodeUrl: string
+  }) => ipcRenderer.invoke('episode-completion:mark', data),
+  unmark: (workId: string, episodeId: string) =>
+    ipcRenderer.invoke('episode-completion:unmark', workId, episodeId),
+  isCompleted: (workId: string, episodeId: string) =>
+    ipcRenderer.invoke('episode-completion:is-completed', workId, episodeId),
+  clearByWorkId: (workId: string) => ipcRenderer.invoke('episode-completion:clear-by-work', workId),
 })
 
 contextBridge.exposeInMainWorld('speechDictionary', {

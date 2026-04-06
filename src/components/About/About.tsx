@@ -15,7 +15,7 @@ export const About = ({ isOpen, onClose }: AboutProps) => {
       <div className="about-modal">
         <div className="about-header">
           <h2>Kakuyomu Browserについて</h2>
-          <button type="button" onClick={onClose} className="about-close-button">
+          <button type="button" onClick={onClose} className="about-close-button" title="閉じる" aria-label="閉じる">
             <X size={20} />
           </button>
         </div>

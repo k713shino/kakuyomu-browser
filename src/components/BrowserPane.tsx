@@ -1,5 +1,5 @@
 import { Copy, Plus, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { BrowserTab } from '../hooks/useBrowserTabs'
 import type { BrowserWebview } from '../lib/webview'
 
@@ -36,6 +36,7 @@ export function BrowserPane({
     x: number
     y: number
   } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!contextMenu) {
@@ -59,6 +60,15 @@ export function BrowserPane({
       window.removeEventListener('click', handleWindowClick)
       window.removeEventListener('keydown', handleEscape)
     }
+  }, [contextMenu])
+
+  useEffect(() => {
+    if (!contextMenu || !contextMenuRef.current) {
+      return
+    }
+
+    contextMenuRef.current.style.left = `${contextMenu.x}px`
+    contextMenuRef.current.style.top = `${contextMenu.y}px`
   }, [contextMenu])
 
   return (
@@ -143,8 +153,8 @@ export function BrowserPane({
 
       {contextMenu && (
         <div
+          ref={contextMenuRef}
           className="tab-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={event => event.stopPropagation()}
         >
           <button

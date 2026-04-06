@@ -3,6 +3,7 @@ export type ReaderFontSize = 'small' | 'medium' | 'large'
 
 export interface DisplaySettings {
   adBlockEnabled: boolean
+  autoReadEnabled: boolean
   readerWidth: ReaderWidth
   readerFontSize: ReaderFontSize
   speechSpeed: number

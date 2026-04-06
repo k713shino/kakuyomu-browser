@@ -164,6 +164,15 @@ interface QuickLink {
   url: string
   order: number
   folderId?: string | null
+  tags?: string[]
+  workId?: string | null
+  lastCheckedAt?: number | null
+  lastKnownEpisodeId?: string | null
+  lastKnownEpisodeTitle?: string | null
+  lastKnownEpisodeUrl?: string | null
+  lastKnownEpisodePublishedAt?: string | null
+  totalEpisodes?: number | null
+  unreadEpisodeCount?: number
 }
 
 interface QuickLinkFolder {
@@ -183,10 +192,28 @@ const quickLinksPath = path.join(app.getPath('userData'), 'quick-links.json')
 // デフォルトのクイックリンク
 const defaultQuickLinksData: QuickLinksData = {
   links: [
-    { id: '1', title: 'カクヨムトップ', url: 'https://kakuyomu.jp', order: 0, folderId: null },
-    { id: '2', title: 'マイワークスペース', url: 'https://kakuyomu.jp/my', order: 1, folderId: null },
+    { id: '1', title: 'カクヨムトップ', url: 'https://kakuyomu.jp', order: 0, folderId: null, tags: [] },
+    { id: '2', title: 'マイワークスペース', url: 'https://kakuyomu.jp/my', order: 1, folderId: null, tags: [] },
   ],
   folders: []
+}
+
+function normalizeQuickLink(link: QuickLink): QuickLink {
+  return {
+    ...link,
+    folderId: link.folderId ?? null,
+    tags: Array.isArray(link.tags)
+      ? [...new Set(link.tags.map(tag => String(tag).trim()).filter(Boolean))]
+      : [],
+    workId: link.workId ?? parseKakuyomuUrl(link.url).workId,
+    lastCheckedAt: link.lastCheckedAt ?? null,
+    lastKnownEpisodeId: link.lastKnownEpisodeId ?? null,
+    lastKnownEpisodeTitle: link.lastKnownEpisodeTitle ?? null,
+    lastKnownEpisodeUrl: link.lastKnownEpisodeUrl ?? null,
+    lastKnownEpisodePublishedAt: link.lastKnownEpisodePublishedAt ?? null,
+    totalEpisodes: typeof link.totalEpisodes === 'number' ? link.totalEpisodes : null,
+    unreadEpisodeCount: typeof link.unreadEpisodeCount === 'number' ? link.unreadEpisodeCount : 0,
+  }
 }
 
 // クイックリンクデータを読み込む
@@ -199,14 +226,18 @@ function loadQuickLinksData(): QuickLinksData {
       // 古い形式（配列）から新しい形式（オブジェクト）への移行
       if (Array.isArray(parsed)) {
         const migrated: QuickLinksData = {
-          links: parsed.map((link: any) => ({ ...link, folderId: null })),
+          links: parsed.map((link: any) => normalizeQuickLink({ ...link, folderId: null })),
           folders: []
         }
         saveQuickLinksData(migrated)
         return migrated
       }
 
-      return parsed
+      const normalized: QuickLinksData = {
+        links: Array.isArray(parsed.links) ? parsed.links.map((link: QuickLink) => normalizeQuickLink(link)) : [],
+        folders: Array.isArray(parsed.folders) ? parsed.folders : [],
+      }
+      return normalized
     } else {
       // 初回起動時はデフォルトリンクを保存
       saveQuickLinksData(defaultQuickLinksData)
@@ -221,7 +252,11 @@ function loadQuickLinksData(): QuickLinksData {
 // クイックリンクデータを保存する
 function saveQuickLinksData(data: QuickLinksData): void {
   try {
-    fs.writeFileSync(quickLinksPath, JSON.stringify(data, null, 2), 'utf-8')
+    const normalized: QuickLinksData = {
+      links: data.links.map(link => normalizeQuickLink(link)),
+      folders: data.folders,
+    }
+    fs.writeFileSync(quickLinksPath, JSON.stringify(normalized, null, 2), 'utf-8')
   } catch (error) {
     console.error('Failed to save quick links:', error)
   }
@@ -232,14 +267,14 @@ ipcMain.handle('quick-links:get', () => {
   return loadQuickLinksData()
 })
 
-ipcMain.handle('quick-links:add', (_, link: { title: string; url: string; folderId?: string | null }) => {
+ipcMain.handle('quick-links:add', (_, link: { title: string; url: string; folderId?: string | null; tags?: string[] }) => {
   const data = loadQuickLinksData()
-  const newLink: QuickLink = {
+  const newLink = normalizeQuickLink({
     ...link,
     id: Date.now().toString(),
     order: data.links.length,
     folderId: link.folderId || null,
-  }
+  })
   data.links.push(newLink)
   saveQuickLinksData(data)
   return newLink
@@ -249,7 +284,7 @@ ipcMain.handle('quick-links:update', (_, updatedLink: QuickLink) => {
   const data = loadQuickLinksData()
   const index = data.links.findIndex((l: QuickLink) => l.id === updatedLink.id)
   if (index !== -1) {
-    data.links[index] = updatedLink
+    data.links[index] = normalizeQuickLink(updatedLink)
     saveQuickLinksData(data)
     return true
   }
@@ -317,8 +352,27 @@ ipcMain.handle('quick-links:export', () => {
 })
 
 ipcMain.handle('quick-links:import', (_, data: QuickLinksData) => {
-  saveQuickLinksData(data)
+  saveQuickLinksData({
+    links: Array.isArray(data.links) ? data.links.map(link => normalizeQuickLink(link)) : [],
+    folders: Array.isArray(data.folders) ? data.folders : [],
+  })
   return true
+})
+
+ipcMain.handle('quick-links:check-updates', async () => {
+  const data = loadQuickLinksData()
+  const nextLinks: QuickLink[] = []
+
+  for (const link of data.links) {
+    nextLinks.push(await refreshQuickLinkUpdateInfo(link))
+  }
+
+  const nextData: QuickLinksData = {
+    ...data,
+    links: nextLinks,
+  }
+  saveQuickLinksData(nextData)
+  return nextLinks
 })
 
 // Reading History
@@ -346,6 +400,7 @@ const AIVIS_SPEECH_URL = 'http://127.0.0.1:10101'
 
 const defaultDisplaySettings: DisplaySettings = {
   adBlockEnabled: true,
+  autoReadEnabled: false,
   readerWidth: 'comfortable',
   readerFontSize: 'medium',
   speechSpeed: 1.05,
@@ -922,6 +977,120 @@ function parseKakuyomuUrl(url: string): { workId: string | null; episodeId: stri
   }
 }
 
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+}
+
+async function fetchKakuyomuWorkSummary(url: string) {
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'kakuyomu-browser/1.0',
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Kakuyomu work page: ${response.status}`)
+  }
+
+  const html = await response.text()
+  const { workId } = parseKakuyomuUrl(url)
+  if (!workId) {
+    return null
+  }
+
+  const episodeRegex = new RegExp(`/works/${workId}/episodes/([^"'?#/<>]+)`, 'g')
+  const episodeIds: string[] = []
+  const seenEpisodeIds = new Set<string>()
+  let match: RegExpExecArray | null
+  while ((match = episodeRegex.exec(html)) !== null) {
+    const episodeId = match[1]
+    if (!seenEpisodeIds.has(episodeId)) {
+      seenEpisodeIds.add(episodeId)
+      episodeIds.push(episodeId)
+    }
+  }
+
+  const scriptDataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/)
+  if (scriptDataMatch) {
+    try {
+      const nextData = JSON.parse(scriptDataMatch[1])
+      const episodes =
+        nextData?.props?.pageProps?.__APOLLO_STATE__ &&
+        Object.values(nextData.props.pageProps.__APOLLO_STATE__).find((value: any) =>
+          Array.isArray(value?.tableOfContents),
+        )
+      const totalEpisodes = typeof (episodes as any)?.totalEpisodeCount === 'number'
+        ? (episodes as any).totalEpisodeCount
+        : episodeIds.length
+      return {
+        workId,
+        totalEpisodes,
+        latestEpisodeId: episodeIds[0] ?? null,
+      }
+    } catch (error) {
+      console.error('Failed to parse Kakuyomu NEXT_DATA:', error)
+    }
+  }
+
+  const titleMatch = html.match(/<a[^>]+href="\/works\/[^"]+\/episodes\/([^"]+)"[^>]*>([\s\S]*?)<\/a>/)
+  const latestEpisodeId = titleMatch?.[1] ?? episodeIds[0] ?? null
+  const latestEpisodeTitle = titleMatch
+    ? decodeHtmlEntities(titleMatch[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
+    : null
+  const dateMatch = html.match(/<time[^>]*datetime="([^"]+)"/)
+
+  return {
+    workId,
+    totalEpisodes: episodeIds.length,
+    latestEpisodeId,
+    latestEpisodeTitle,
+    latestEpisodeUrl: latestEpisodeId ? `https://kakuyomu.jp/works/${workId}/episodes/${latestEpisodeId}` : null,
+    latestEpisodePublishedAt: dateMatch?.[1] ?? null,
+  }
+}
+
+async function refreshQuickLinkUpdateInfo(link: QuickLink): Promise<QuickLink> {
+  const { workId } = parseKakuyomuUrl(link.url)
+  if (!workId || !link.url.includes('/works/')) {
+    return normalizeQuickLink(link)
+  }
+
+  try {
+    const summary = await fetchKakuyomuWorkSummary(link.url)
+    if (!summary) {
+      return normalizeQuickLink(link)
+    }
+
+    const completion = loadEpisodeCompletionData().items.find(item => item.workId === workId)
+    const completedCount = completion?.completedEpisodes.length ?? 0
+    const totalEpisodes = summary.totalEpisodes ?? null
+
+    return normalizeQuickLink({
+      ...link,
+      workId,
+      lastCheckedAt: Date.now(),
+      lastKnownEpisodeId: summary.latestEpisodeId ?? link.lastKnownEpisodeId ?? null,
+      lastKnownEpisodeTitle: summary.latestEpisodeTitle ?? link.lastKnownEpisodeTitle ?? null,
+      lastKnownEpisodeUrl: summary.latestEpisodeUrl ?? link.lastKnownEpisodeUrl ?? null,
+      lastKnownEpisodePublishedAt: summary.latestEpisodePublishedAt ?? link.lastKnownEpisodePublishedAt ?? null,
+      totalEpisodes,
+      unreadEpisodeCount: totalEpisodes !== null ? Math.max(totalEpisodes - completedCount, 0) : 0,
+    })
+  } catch (error) {
+    console.error('Failed to refresh quick link update info:', error)
+    return normalizeQuickLink({
+      ...link,
+      workId,
+      lastCheckedAt: Date.now(),
+    })
+  }
+}
+
 ipcMain.handle('reading-history:get', () => {
   const data = loadReadingHistoryData()
   // 最終読書日時の降順でソート
@@ -1012,4 +1181,141 @@ ipcMain.handle('display-settings:update', (_, settings: Partial<DisplaySettings>
 ipcMain.handle('display-settings:reset', () => {
   saveDisplaySettings(defaultDisplaySettings)
   return defaultDisplaySettings
+})
+
+// Episode Completion Storage
+interface CompletedEpisode {
+  episodeId: string
+  episodeTitle: string
+  episodeUrl: string
+  completedAt: number
+}
+
+interface EpisodeCompletionItem {
+  workId: string
+  workTitle: string
+  workUrl: string
+  completedEpisodes: CompletedEpisode[]
+}
+
+interface EpisodeCompletionData {
+  items: EpisodeCompletionItem[]
+}
+
+const episodeCompletionPath = path.join(app.getPath('userData'), 'episode-completion.json')
+
+function loadEpisodeCompletionData(): EpisodeCompletionData {
+  try {
+    if (fs.existsSync(episodeCompletionPath)) {
+      const data = fs.readFileSync(episodeCompletionPath, 'utf-8')
+      return JSON.parse(data)
+    } else {
+      const defaultData: EpisodeCompletionData = { items: [] }
+      saveEpisodeCompletionData(defaultData)
+      return defaultData
+    }
+  } catch (error) {
+    console.error('Failed to load episode completion data:', error)
+    return { items: [] }
+  }
+}
+
+function saveEpisodeCompletionData(data: EpisodeCompletionData): void {
+  try {
+    fs.writeFileSync(episodeCompletionPath, JSON.stringify(data, null, 2), 'utf-8')
+  } catch (error) {
+    console.error('Failed to save episode completion data:', error)
+  }
+}
+
+ipcMain.handle('episode-completion:get-all', () => {
+  return loadEpisodeCompletionData().items
+})
+
+ipcMain.handle('episode-completion:get-by-work', (_, workId: string) => {
+  const data = loadEpisodeCompletionData()
+  return data.items.find(item => item.workId === workId) ?? null
+})
+
+ipcMain.handle(
+  'episode-completion:mark',
+  (
+    _,
+    payload: {
+      workId: string
+      workTitle: string
+      workUrl: string
+      episodeId: string
+      episodeTitle: string
+      episodeUrl: string
+    },
+  ) => {
+    const data = loadEpisodeCompletionData()
+    let workItem = data.items.find(item => item.workId === payload.workId)
+
+    if (!workItem) {
+      workItem = {
+        workId: payload.workId,
+        workTitle: payload.workTitle,
+        workUrl: payload.workUrl,
+        completedEpisodes: [],
+      }
+      data.items.push(workItem)
+    } else {
+      // タイトルを最新に更新
+      if (payload.workTitle) {
+        workItem.workTitle = payload.workTitle
+      }
+    }
+
+    const alreadyCompleted = workItem.completedEpisodes.some(ep => ep.episodeId === payload.episodeId)
+    if (!alreadyCompleted) {
+      const newEpisode: CompletedEpisode = {
+        episodeId: payload.episodeId,
+        episodeTitle: payload.episodeTitle,
+        episodeUrl: payload.episodeUrl,
+        completedAt: Date.now(),
+      }
+      workItem.completedEpisodes.push(newEpisode)
+      saveEpisodeCompletionData(data)
+      return newEpisode
+    }
+
+    return workItem.completedEpisodes.find(ep => ep.episodeId === payload.episodeId)
+  },
+)
+
+ipcMain.handle('episode-completion:unmark', (_, workId: string, episodeId: string) => {
+  const data = loadEpisodeCompletionData()
+  const workItem = data.items.find(item => item.workId === workId)
+  if (!workItem) {
+    return false
+  }
+
+  const before = workItem.completedEpisodes.length
+  workItem.completedEpisodes = workItem.completedEpisodes.filter(ep => ep.episodeId !== episodeId)
+  if (workItem.completedEpisodes.length !== before) {
+    saveEpisodeCompletionData(data)
+    return true
+  }
+
+  return false
+})
+
+ipcMain.handle('episode-completion:is-completed', (_, workId: string, episodeId: string) => {
+  const data = loadEpisodeCompletionData()
+  const workItem = data.items.find(item => item.workId === workId)
+  return workItem?.completedEpisodes.some(ep => ep.episodeId === episodeId) ?? false
+})
+
+ipcMain.handle('episode-completion:clear-by-work', (_, workId: string) => {
+  const data = loadEpisodeCompletionData()
+  const before = data.items.length
+  data.items = data.items.filter(item => item.workId !== workId)
+  if (data.items.length !== before) {
+    saveEpisodeCompletionData(data)
+    return true
+  }
+
+  return false
 })

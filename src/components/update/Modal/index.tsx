@@ -1,4 +1,4 @@
-import React, { ReactNode } from 'react'
+import React, { ReactNode, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import './modal.css'
 
@@ -21,17 +21,34 @@ const ModalTemplate: React.FC<React.PropsWithChildren<{
     onOk,
     width = 530,
   } = props
+  const contentRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (contentRef.current) {
+      contentRef.current.style.width = `${width}px`
+    }
+  }, [width])
 
   return (
     <div className='update-modal'>
       <div className='update-modal__mask' />
       <div className='update-modal__warp'>
-        <div className='update-modal__content' style={{ width }}>
+        <div ref={contentRef} className='update-modal__content'>
           <div className='content__header'>
             <div className='content__header-text'>{title}</div>
             <span
               className='update-modal--close'
               onClick={onCancel}
+              role='button'
+              tabIndex={0}
+              aria-label='閉じる'
+              title='閉じる'
+              onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  onCancel?.()
+                }
+              }}
             >
               <svg
                 viewBox="0 0 1024 1024"

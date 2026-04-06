@@ -46,6 +46,8 @@ function App() {
     activateTab,
     moveTab,
     registerWebview,
+    autoReadCountdown,
+    cancelAutoRead,
   } = useBrowserTabs()
 
   useEffect(() => {
@@ -218,6 +220,21 @@ function App() {
         onClose={() => setIsHistoryOpen(false)}
         onNavigate={navigateToUrl}
       />
+
+      {autoReadCountdown !== null && (
+        <div className="auto-read-toast">
+          <span className="auto-read-toast-message">
+            {autoReadCountdown}秒後に次の話へ移動します
+          </span>
+          <button
+            type="button"
+            className="auto-read-toast-cancel"
+            onClick={cancelAutoRead}
+          >
+            キャンセル
+          </button>
+        </div>
+      )}
     </div>
   )
 }

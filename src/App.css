@@ -33,6 +33,7 @@
 .browser-header {
   height: 56px;
   background-color: var(--header-bg);
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border-color);
   display: flex;
@@ -361,6 +362,59 @@
     transform: scaleX(1);
     opacity: 0;
   }
+}
+
+/* 連続読みカウントダウントースト */
+.auto-read-toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px 10px 20px;
+  background: rgba(15, 23, 42, 0.92);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 500;
+  animation: auto-read-toast-in 0.2s ease;
+  white-space: nowrap;
+}
+
+@keyframes auto-read-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.auto-read-toast-message {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.auto-read-toast-cancel {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.auto-read-toast-cancel:hover {
+  background: rgba(255, 255, 255, 0.22);
 }
 
 @media (max-width: 900px) {

@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { extractWorkId, HOME_URL, isKakuyomuWorkUrl } from '../lib/browser'
 import {
   applyDisplaySettings,
+  checkIsNearPageBottom,
   clearSpeechParagraphHighlights,
   extractEpisodeSpeechContent,
+  getNextEpisodeUrl,
   getSelectedText,
   getSafePageTitle,
   highlightSpeechParagraphs,
@@ -108,6 +110,7 @@ export const useBrowserTabs = () => {
     () => initialSessionRef.current?.activeTabId ?? createTab().id,
   )
   const [speechStates, setSpeechStates] = useState<Record<string, SpeechPlaybackState>>({})
+  const speechStatesRef = useRef<Record<string, SpeechPlaybackState>>({})
   const webviewRefs = useRef<Record<string, BrowserWebview | null>>({})
   const cleanupMap = useRef<Record<string, () => void>>({})
   const refCallbackMap = useRef<Record<string, (node: BrowserWebview | null) => void>>({})
@@ -115,12 +118,23 @@ export const useBrowserTabs = () => {
   const speechQueueRef = useRef<HTMLAudioElement[]>([])
   const speechTabIdRef = useRef<string | null>(null)
   const speechRequestIdRef = useRef(0)
+  const autoReadIntervalMap = useRef<Record<string, ReturnType<typeof setInterval> | null>>({})
+  const autoReadPendingRef = useRef<{
+    tabId: string
+    nextUrl: string
+    timer: ReturnType<typeof setInterval>
+  } | null>(null)
+  const [autoReadCountdown, setAutoReadCountdown] = useState<number | null>(null)
 
   useEffect(() => {
     if (!tabs.some(tab => tab.id === activeTabId) && tabs[0]) {
       setActiveTabId(tabs[0].id)
     }
   }, [activeTabId, tabs])
+
+  useEffect(() => {
+    speechStatesRef.current = speechStates
+  }, [speechStates])
 
   useEffect(() => {
     if (typeof window === 'undefined' || tabs.length === 0) {
@@ -227,6 +241,125 @@ export const useBrowserTabs = () => {
     }
   }, [])
 
+  const markEpisodeAsCompleted = useCallback(async (webview: BrowserWebview, episodeTitle: string) => {
+    try {
+      const currentUrl = webview.getURL()
+      const match = currentUrl.match(/\/works\/([^/?#]+)\/episodes\/([^/?#]+)/)
+      if (!match) {
+        return
+      }
+
+      const [, workId, episodeId] = match
+      const workUrl = `https://kakuyomu.jp/works/${workId}`
+
+      // 読書履歴からworkTitleを取得する
+      const history = await window.readingHistory.getHistory()
+      const historyItem = history.find(item => item.id === workId)
+      const workTitle = historyItem?.title ?? ''
+
+      await window.episodeCompletion.mark({
+        workId,
+        workTitle,
+        workUrl,
+        episodeId,
+        episodeTitle,
+        episodeUrl: currentUrl,
+      })
+    } catch (error) {
+      console.error('Failed to mark episode as completed:', error)
+    }
+  }, [])
+
+  const clearAutoReadPending = useCallback(() => {
+    if (autoReadPendingRef.current) {
+      clearInterval(autoReadPendingRef.current.timer)
+      autoReadPendingRef.current = null
+      setAutoReadCountdown(null)
+    }
+  }, [])
+
+  const stopAutoReadWatcher = useCallback((tabId: string) => {
+    const interval = autoReadIntervalMap.current[tabId]
+    if (interval !== null && interval !== undefined) {
+      clearInterval(interval)
+      autoReadIntervalMap.current[tabId] = null
+    }
+    // このタブのカウントダウンが進行中なら一緒にキャンセル
+    if (autoReadPendingRef.current?.tabId === tabId) {
+      clearAutoReadPending()
+    }
+  }, [clearAutoReadPending])
+
+  const isSpeechBlockingAutoRead = useCallback((tabId: string) => {
+    const speechState = speechStatesRef.current[tabId] ?? 'idle'
+    return speechState === 'loading' || speechState === 'playing' || speechState === 'paused'
+  }, [])
+
+  const startAutoReadWatcher = useCallback((tabId: string, webview: BrowserWebview) => {
+    stopAutoReadWatcher(tabId)
+
+    // did-stop-loading 直後はDOMレンダリングが完了していないため、
+    // 最初の数ティックはチェックをスキップしてレンダリング完了を待つ
+    let warmupTicksRemaining = 4 // 4 × 500ms = 2秒のウォームアップ
+
+    autoReadIntervalMap.current[tabId] = setInterval(async () => {
+      if (warmupTicksRemaining > 0) {
+        warmupTicksRemaining--
+        return
+      }
+
+      try {
+        if (isSpeechBlockingAutoRead(tabId)) {
+          if (autoReadPendingRef.current?.tabId === tabId) {
+            clearAutoReadPending()
+          }
+          return
+        }
+
+        // カウントダウン中: 上にスクロールしたら自動キャンセル
+        if (autoReadPendingRef.current?.tabId === tabId) {
+          const isStillNearBottom = await checkIsNearPageBottom(webview)
+          if (!isStillNearBottom) {
+            clearAutoReadPending()
+          }
+          return
+        }
+
+        const isNearBottom = await checkIsNearPageBottom(webview)
+        if (!isNearBottom) {
+          return
+        }
+
+        const nextUrl = await getNextEpisodeUrl(webview)
+        if (!nextUrl) {
+          return
+        }
+
+        // 即ナビゲートせず 3 秒のカウントダウンを開始
+        const COUNTDOWN_SECONDS = 3
+        let remaining = COUNTDOWN_SECONDS
+        setAutoReadCountdown(remaining)
+
+        const countdownTimer = setInterval(() => {
+          remaining--
+          if (remaining <= 0) {
+            clearInterval(countdownTimer)
+            autoReadPendingRef.current = null
+            setAutoReadCountdown(null)
+            stopAutoReadWatcher(tabId)
+            webview.loadURL(nextUrl)
+          } else {
+            setAutoReadCountdown(remaining)
+          }
+        }, 1000)
+
+        autoReadPendingRef.current = { tabId, nextUrl, timer: countdownTimer }
+      } catch (error) {
+        console.error('Auto-read watcher error:', error)
+      }
+    }, 500)
+  }, [clearAutoReadPending, isSpeechBlockingAutoRead, stopAutoReadWatcher])
+
   const restoreScrollPosition = useCallback(async (webview: BrowserWebview) => {
     try {
       const currentUrl = webview.getURL()
@@ -279,6 +412,7 @@ export const useBrowserTabs = () => {
       }
 
       const handleDidNavigate = () => {
+        stopAutoReadWatcher(tabId)
         syncNavigationState()
         if (speechTabIdRef.current === tabId) {
           stopAudioPlayback()
@@ -299,6 +433,23 @@ export const useBrowserTabs = () => {
         await syncDisplaySettings(webview)
         await saveReadingHistory(webview, title)
         await restoreScrollPosition(webview)
+
+        // エピソードページなら読了マーク
+        const currentUrl = webview.getURL()
+        if (currentUrl.includes('/episodes/')) {
+          await markEpisodeAsCompleted(webview, title)
+        }
+
+        // 連続読みウォッチャーの起動
+        stopAutoReadWatcher(tabId)
+        try {
+          const settings = await window.displaySettings.get()
+          if (settings.autoReadEnabled && currentUrl.includes('/episodes/')) {
+            startAutoReadWatcher(tabId, webview)
+          }
+        } catch (error) {
+          console.error('Failed to check auto-read settings:', error)
+        }
       }
 
       webview.addEventListener('did-start-loading', handleDidStartLoading)
@@ -311,11 +462,16 @@ export const useBrowserTabs = () => {
         webview.removeEventListener('did-stop-loading', handleDidStopLoading)
         webview.removeEventListener('did-navigate', handleDidNavigate)
         webview.removeEventListener('did-navigate-in-page', handleDidNavigate)
+        stopAutoReadWatcher(tabId)
       }
     },
     [
+      clearAutoReadPending,
+      markEpisodeAsCompleted,
       restoreScrollPosition,
       saveReadingHistory,
+      startAutoReadWatcher,
+      stopAutoReadWatcher,
       syncDisplaySettings,
       stopAudioPlayback,
       updateSpeechState,
@@ -568,10 +724,29 @@ export const useBrowserTabs = () => {
 
   const refreshDisplaySettings = useCallback(async () => {
     const webview = getActiveWebview()
-    if (webview) {
-      await syncDisplaySettings(webview)
+    if (!webview) {
+      return
     }
-  }, [getActiveWebview, syncDisplaySettings])
+
+    await syncDisplaySettings(webview)
+
+    // 連続読み設定が変わった可能性があるのでウォッチャーを再同期
+    const tabId = activeTab?.id
+    if (!tabId) {
+      return
+    }
+
+    try {
+      const settings = await window.displaySettings.get()
+      const currentUrl = webview.getURL()
+      stopAutoReadWatcher(tabId)
+      if (settings.autoReadEnabled && currentUrl.includes('/episodes/')) {
+        startAutoReadWatcher(tabId, webview)
+      }
+    } catch (error) {
+      console.error('Failed to refresh auto-read watcher:', error)
+    }
+  }, [activeTab, getActiveWebview, startAutoReadWatcher, stopAutoReadWatcher, syncDisplaySettings])
 
   const getActiveTabSelectedText = useCallback(async () => {
     const webview = getActiveWebview()
@@ -754,6 +929,16 @@ export const useBrowserTabs = () => {
     updateSpeechState(activeId, 'idle')
   }, [activeTab, speechStates, stopAudioPlayback, updateSpeechState])
 
+  // キャンセル: countdown とポーリングウォッチャーを両方停止。
+  // ウォッチャーは次のページ読み込み（did-stop-loading）で再起動されるため、
+  // 同じエピソードでは再発動せず、次の話へ移動したら再び有効になる。
+  const cancelAutoRead = useCallback(() => {
+    if (!autoReadPendingRef.current) return
+    const tabId = autoReadPendingRef.current.tabId
+    clearAutoReadPending()
+    stopAutoReadWatcher(tabId)
+  }, [clearAutoReadPending, stopAutoReadWatcher])
+
   return {
     tabs,
     activeTab,
@@ -781,5 +966,7 @@ export const useBrowserTabs = () => {
     stopActiveTabSpeech,
     toggleActiveTabSpeech,
     url: activeTab?.url ?? HOME_URL,
+    autoReadCountdown,
+    cancelAutoRead,
   }
 }

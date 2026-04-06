@@ -280,6 +280,33 @@
   flex-wrap: wrap;
 }
 
+.history-progress-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.history-progress-pill,
+.history-unread-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.history-progress-pill {
+  background: #243447;
+  color: #c7d2e5;
+}
+
+.history-unread-pill {
+  background: #123b3a;
+  color: #86efac;
+}
+
 .history-item-date,
 .history-item-count,
 .history-item-bookmark {
@@ -352,4 +379,83 @@
   .history-item-meta {
     gap: 10px;
   }
+}
+
+/* 読了エピソード */
+.history-item-completed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid #3d5a3e;
+  border-radius: 999px;
+  color: #6abf70;
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.history-item-completed-badge:hover,
+.history-item-completed-badge.active {
+  background-color: #2a3d2b;
+  color: #8fd195;
+}
+
+.history-item-episodes {
+  margin-top: 10px;
+  border-top: 1px solid #404040;
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-episode-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  padding: 4px 6px;
+  transition: background-color 0.15s;
+}
+
+.history-episode-row:hover {
+  background-color: #404040;
+}
+
+.history-episode-title {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: #bbb;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+
+.history-episode-title:hover {
+  color: #fff;
+}
+
+.history-episode-unmark {
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.history-episode-unmark:hover {
+  color: #dc3545;
 }
