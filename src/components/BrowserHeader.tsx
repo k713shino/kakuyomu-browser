@@ -1,16 +1,22 @@
 import {
   ArrowLeft,
   ArrowRight,
+  LoaderCircle,
+  Pause,
+  Play,
   RotateCcw,
+  Square,
   Home,
   PanelRight,
   HelpCircle,
   BookOpen,
   Type,
+  TextCursorInput,
 } from 'lucide-react'
 import type { RefObject } from 'react'
 import { QuickLinksDropdown } from './QuickLinks/QuickLinksDropdown'
 import type { QuickLinksDropdownHandle } from './QuickLinks/QuickLinksDropdown'
+import type { SpeechPlaybackState } from '../lib/webview'
 
 interface BrowserHeaderProps {
   canGoBack: boolean
@@ -18,6 +24,7 @@ interface BrowserHeaderProps {
   currentTitle: string
   currentUrl: string
   isSidebarOpen: boolean
+  speechState: SpeechPlaybackState
   quickLinksRef: RefObject<QuickLinksDropdownHandle>
   onGoBack: () => void
   onGoForward: () => void
@@ -28,7 +35,10 @@ interface BrowserHeaderProps {
   onToggleSidebar: () => void
   onOpenHistory: () => void
   onOpenDisplaySettings: () => void
+  onOpenQuickDictionaryAdd: () => void
   onOpenAbout: () => void
+  onToggleSpeech: () => void
+  onStopSpeech: () => void
 }
 
 export function BrowserHeader({
@@ -37,6 +47,7 @@ export function BrowserHeader({
   currentTitle,
   currentUrl,
   isSidebarOpen,
+  speechState,
   quickLinksRef,
   onGoBack,
   onGoForward,
@@ -47,8 +58,24 @@ export function BrowserHeader({
   onToggleSidebar,
   onOpenHistory,
   onOpenDisplaySettings,
+  onOpenQuickDictionaryAdd,
   onOpenAbout,
+  onToggleSpeech,
+  onStopSpeech,
 }: BrowserHeaderProps) {
+  const isSpeechBusy = speechState === 'loading'
+  const isSpeechActive = speechState === 'playing' || speechState === 'paused' || speechState === 'loading'
+  const speechTitle =
+    speechState === 'loading'
+      ? 'AivisSpeech で音声を生成中'
+      : speechState === 'playing'
+      ? '読み上げを一時停止'
+      : speechState === 'paused'
+        ? '読み上げを再開'
+        : speechState === 'unavailable'
+          ? 'AivisSpeech が見つからないか、このページは読み上げできません'
+          : 'AivisSpeech で読み上げを開始'
+
   return (
     <header className="browser-header">
       <div className="nav-controls">
@@ -93,11 +120,44 @@ export function BrowserHeader({
         </button>
         <button
           type="button"
+          onClick={onOpenQuickDictionaryAdd}
+          className="icon-button quick-dictionary-button"
+          title="選択中の語を読み辞書に追加"
+        >
+          <TextCursorInput size={18} />
+          <span>辞書追加</span>
+        </button>
+        <button
+          type="button"
           onClick={onToggleSidebar}
           className={`icon-button ${isSidebarOpen ? 'is-active' : ''}`}
           title="サイドバーを開く/閉じる"
         >
           <PanelRight size={20} />
+        </button>
+        <button
+          type="button"
+          onClick={onToggleSpeech}
+          className={`icon-button ${isSpeechActive ? 'is-active' : ''}`}
+          title={speechTitle}
+          disabled={isSpeechBusy}
+        >
+          {speechState === 'loading' ? (
+            <LoaderCircle size={20} className="spin" />
+          ) : speechState === 'playing' ? (
+            <Pause size={20} />
+          ) : (
+            <Play size={20} />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={onStopSpeech}
+          className="icon-button"
+          title="読み上げを停止"
+          disabled={!isSpeechActive}
+        >
+          <Square size={18} />
         </button>
         <button
           type="button"

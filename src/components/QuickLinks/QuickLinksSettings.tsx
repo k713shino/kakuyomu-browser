@@ -75,6 +75,12 @@ export function QuickLinksSettings({
     adBlockEnabled: true,
     readerWidth: 'comfortable',
     readerFontSize: 'medium',
+    speechSpeed: 1.05,
+    speechIntonation: 1.15,
+    speechSpeakerUuid: null,
+    speechStyleId: null,
+    speechDictionary: [],
+    speechWorkDictionaries: {},
   })
 
   useEffect(() => {

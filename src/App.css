@@ -63,6 +63,20 @@
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.quick-dictionary-button {
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid #c7d2fe;
+  background: linear-gradient(180deg, #f8fbff, #eef6ff);
+  color: #1d4ed8;
+}
+
+.quick-dictionary-button span {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
 .icon-button:hover:not(:disabled) {
   background-color: var(--hover-bg);
   color: var(--primary-color);
@@ -76,6 +90,31 @@
 .icon-button:disabled {
   opacity: 0.3;
   cursor: default;
+}
+
+.icon-button.is-active {
+  background-color: #e0f2fe;
+  color: #0369a1;
+}
+
+.quick-dictionary-button:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffffff, #dbeafe);
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.spin {
+  animation: icon-spin 1s linear infinite;
+}
+
+@keyframes icon-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .url-bar {
@@ -328,6 +367,14 @@
   .browser-header {
     padding: 0 10px;
     gap: 8px;
+  }
+
+  .quick-dictionary-button span {
+    display: none;
+  }
+
+  .quick-dictionary-button {
+    padding: 8px;
   }
 
   .tab-strip {

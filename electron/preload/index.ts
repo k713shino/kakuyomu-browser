@@ -60,6 +60,29 @@ contextBridge.exposeInMainWorld('displaySettings', {
   reset: () => ipcRenderer.invoke('display-settings:reset'),
 })
 
+contextBridge.exposeInMainWorld('aivisSpeech', {
+  synthesize: (payload: { text: string; title?: string; workId?: string | null }) =>
+    ipcRenderer.invoke('aivis-speech:synthesize', payload),
+  getSpeakers: () => ipcRenderer.invoke('aivis-speech:get-speakers'),
+  prepare: (payload: { title?: string; workId?: string | null; paragraphs: Array<{ index: number; text: string }> }) =>
+    ipcRenderer.invoke('aivis-speech:prepare', payload),
+  synthesizeChunk: (payload: { chunk: string; styleId: number; speedScale: number; intonationScale: number }) =>
+    ipcRenderer.invoke('aivis-speech:synthesize-chunk', payload),
+})
+
+contextBridge.exposeInMainWorld('speechDictionary', {
+  onAddRequest: (callback: (payload: { text: string; pageUrl: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: { text: string; pageUrl: string }) => {
+      callback(payload)
+    }
+
+    ipcRenderer.on('speech-dictionary:add-requested', listener)
+    return () => {
+      ipcRenderer.removeListener('speech-dictionary:add-requested', listener)
+    }
+  },
+})
+
 // --------- Preload scripts loading ---------
 function domReady(condition: DocumentReadyState[] = ['complete', 'interactive']) {
   return new Promise(resolve => {

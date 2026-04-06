@@ -5,6 +5,21 @@ export interface DisplaySettings {
   adBlockEnabled: boolean
   readerWidth: ReaderWidth
   readerFontSize: ReaderFontSize
+  speechSpeed: number
+  speechIntonation: number
+  speechSpeakerUuid: string | null
+  speechStyleId: number | null
+  speechDictionary: Array<{
+    from: string
+    to: string
+  }>
+  speechWorkDictionaries: Record<
+    string,
+    Array<{
+      from: string
+      to: string
+    }>
+  >
 }
 
 export interface DisplaySettingsAPI {

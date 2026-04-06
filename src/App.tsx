@@ -19,6 +19,7 @@ function App() {
   const [isAboutOpen, setIsAboutOpen] = useState(false)
   const [isHistoryOpen, setIsHistoryOpen] = useState(false)
   const [isDisplaySettingsOpen, setIsDisplaySettingsOpen] = useState(false)
+  const [quickAddSeed, setQuickAddSeed] = useState<{ text: string; token: number }>({ text: '', token: 0 })
   const {
     tabs,
     activeTabId,
@@ -32,6 +33,10 @@ function App() {
     goHome,
     pageTitle,
     refreshDisplaySettings,
+    getActiveTabSelectedText,
+    speechState,
+    stopActiveTabSpeech,
+    toggleActiveTabSpeech,
     url,
     createNewTab,
     duplicateTab,
@@ -119,6 +124,27 @@ function App() {
     }
   }, [activeTabId, closeTab, createNewTab, goBack, goForward, reload])
 
+  useEffect(() => {
+    const unsubscribe = window.speechDictionary.onAddRequest(({ text }) => {
+      setQuickAddSeed({
+        text,
+        token: Date.now(),
+      })
+      setIsDisplaySettingsOpen(true)
+    })
+
+    return unsubscribe
+  }, [])
+
+  const openQuickDictionaryAdd = async () => {
+    const selectedText = (await getActiveTabSelectedText()).trim()
+    setQuickAddSeed({
+      text: selectedText,
+      token: Date.now(),
+    })
+    setIsDisplaySettingsOpen(true)
+  }
+
   return (
     <div className="app-container">
       <BrowserHeader
@@ -127,6 +153,7 @@ function App() {
         currentTitle={pageTitle}
         currentUrl={url}
         isSidebarOpen={isSidebarOpen}
+        speechState={speechState}
         quickLinksRef={quickLinksRef}
         onGoBack={goBack}
         onGoForward={goForward}
@@ -137,7 +164,10 @@ function App() {
         onToggleSidebar={() => setIsSidebarOpen(prev => !prev)}
         onOpenHistory={() => setIsHistoryOpen(true)}
         onOpenDisplaySettings={() => setIsDisplaySettingsOpen(true)}
+        onOpenQuickDictionaryAdd={() => void openQuickDictionaryAdd()}
         onOpenAbout={() => setIsAboutOpen(true)}
+        onToggleSpeech={() => void toggleActiveTabSpeech()}
+        onStopSpeech={() => void stopActiveTabSpeech()}
       />
 
       <BrowserPane
@@ -172,9 +202,13 @@ function App() {
       />
 
       <DisplaySettingsModal
+        currentUrl={url}
         isOpen={isDisplaySettingsOpen}
         onClose={() => setIsDisplaySettingsOpen(false)}
         onChange={() => refreshDisplaySettings()}
+        onRequestSelectedText={() => getActiveTabSelectedText()}
+        prefillQuickAddText={quickAddSeed.text}
+        prefillQuickAddToken={quickAddSeed.token}
       />
 
       <About isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} />

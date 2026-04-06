@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { extractWorkId, HOME_URL, isKakuyomuWorkUrl } from '../lib/browser'
-import { applyDisplaySettings, getSafePageTitle, injectAdBlocker } from '../lib/webview'
+import {
+  applyDisplaySettings,
+  clearSpeechParagraphHighlights,
+  extractEpisodeSpeechContent,
+  getSelectedText,
+  getSafePageTitle,
+  highlightSpeechParagraphs,
+  injectAdBlocker,
+  type SpeechPlaybackState,
+} from '../lib/webview'
 import type { BrowserWebview } from '../lib/webview'
 
 export interface BrowserTab {
@@ -98,8 +107,14 @@ export const useBrowserTabs = () => {
   const [activeTabId, setActiveTabId] = useState(
     () => initialSessionRef.current?.activeTabId ?? createTab().id,
   )
+  const [speechStates, setSpeechStates] = useState<Record<string, SpeechPlaybackState>>({})
   const webviewRefs = useRef<Record<string, BrowserWebview | null>>({})
   const cleanupMap = useRef<Record<string, () => void>>({})
+  const refCallbackMap = useRef<Record<string, (node: BrowserWebview | null) => void>>({})
+  const speechCurrentRef = useRef<HTMLAudioElement | null>(null)
+  const speechQueueRef = useRef<HTMLAudioElement[]>([])
+  const speechTabIdRef = useRef<string | null>(null)
+  const speechRequestIdRef = useRef(0)
 
   useEffect(() => {
     if (!tabs.some(tab => tab.id === activeTabId) && tabs[0]) {
@@ -140,6 +155,45 @@ export const useBrowserTabs = () => {
   const updateTab = useCallback((tabId: string, updater: (tab: BrowserTab) => BrowserTab) => {
     setTabs(prev => prev.map(tab => (tab.id === tabId ? updater(tab) : tab)))
   }, [])
+
+  const updateSpeechState = useCallback((tabId: string, state: SpeechPlaybackState) => {
+    setSpeechStates(prev => ({ ...prev, [tabId]: state }))
+  }, [])
+
+  const clearSpeechState = useCallback((tabId: string | null, state: SpeechPlaybackState = 'idle') => {
+    if (!tabId) {
+      return
+    }
+
+    updateSpeechState(tabId, state)
+  }, [updateSpeechState])
+
+  const stopAudioPlayback = useCallback((state: SpeechPlaybackState = 'idle') => {
+    speechRequestIdRef.current += 1
+    const activeSpeechTabId = speechTabIdRef.current
+    const current = speechCurrentRef.current
+
+    if (current) {
+      current.pause()
+      current.src = ''
+      speechCurrentRef.current = null
+    }
+
+    speechQueueRef.current.forEach(audio => { audio.src = '' })
+    speechQueueRef.current = []
+
+    if (activeSpeechTabId) {
+      const activeWebview = webviewRefs.current[activeSpeechTabId]
+      if (activeWebview) {
+        void clearSpeechParagraphHighlights(activeWebview)
+      }
+    }
+
+    speechTabIdRef.current = null
+    clearSpeechState(activeSpeechTabId, state)
+  }, [clearSpeechState])
+
+  useEffect(() => () => stopAudioPlayback(), [stopAudioPlayback])
 
   const syncDisplaySettings = useCallback(async (webview: BrowserWebview) => {
     try {
@@ -226,12 +280,20 @@ export const useBrowserTabs = () => {
 
       const handleDidNavigate = () => {
         syncNavigationState()
+        if (speechTabIdRef.current === tabId) {
+          stopAudioPlayback()
+        } else {
+          updateSpeechState(tabId, 'idle')
+        }
         void refreshPageTitle()
         void syncDisplaySettings(webview)
       }
 
       const handleDidStopLoading = async () => {
         updateTab(tabId, tab => ({ ...tab, isLoading: false }))
+        if (speechTabIdRef.current !== tabId) {
+          updateSpeechState(tabId, 'idle')
+        }
         syncNavigationState()
         const title = await refreshPageTitle()
         await syncDisplaySettings(webview)
@@ -251,26 +313,39 @@ export const useBrowserTabs = () => {
         webview.removeEventListener('did-navigate-in-page', handleDidNavigate)
       }
     },
-    [restoreScrollPosition, saveReadingHistory, syncDisplaySettings, updateTab],
+    [
+      restoreScrollPosition,
+      saveReadingHistory,
+      syncDisplaySettings,
+      stopAudioPlayback,
+      updateSpeechState,
+      updateTab,
+    ],
   )
 
   const registerWebview = useCallback(
-    (tabId: string) => (node: BrowserWebview | null) => {
-      const current = webviewRefs.current[tabId]
-      if (current === node) {
-        return
+    (tabId: string) => {
+      if (!refCallbackMap.current[tabId]) {
+        refCallbackMap.current[tabId] = (node: BrowserWebview | null) => {
+          const current = webviewRefs.current[tabId]
+          if (current === node) {
+            return
+          }
+
+          if (current && cleanupMap.current[tabId]) {
+            cleanupMap.current[tabId]()
+            delete cleanupMap.current[tabId]
+          }
+
+          webviewRefs.current[tabId] = node
+
+          if (node) {
+            bindWebview(tabId, node)
+          }
+        }
       }
 
-      if (current && cleanupMap.current[tabId]) {
-        cleanupMap.current[tabId]()
-        delete cleanupMap.current[tabId]
-      }
-
-      webviewRefs.current[tabId] = node
-
-      if (node) {
-        bindWebview(tabId, node)
-      }
+      return refCallbackMap.current[tabId]
     },
     [bindWebview],
   )
@@ -337,8 +412,35 @@ export const useBrowserTabs = () => {
         }
         return nextTabs
       })
+
+      setSpeechStates(prev => {
+        const next = { ...prev }
+        const currentIndex = tabs.findIndex(tab => tab.id === tabId)
+        if (currentIndex === -1) {
+          return prev
+        }
+
+        tabs.slice(currentIndex + 1).forEach(tab => {
+          delete next[tab.id]
+        })
+
+        return next
+      })
+
+      const currentIndex = tabs.findIndex(tab => tab.id === tabId)
+      if (currentIndex !== -1) {
+        const removedTabs = tabs.slice(currentIndex + 1).map(tab => tab.id)
+        removedTabs.forEach(removedTabId => {
+          delete cleanupMap.current[removedTabId]
+          delete webviewRefs.current[removedTabId]
+          delete refCallbackMap.current[removedTabId]
+        })
+        if (removedTabs.includes(speechTabIdRef.current ?? '')) {
+          stopAudioPlayback()
+        }
+      }
     },
-    [activeTabId],
+    [activeTabId, stopAudioPlayback, tabs],
   )
 
   const closeAllTabs = useCallback(
@@ -356,17 +458,33 @@ export const useBrowserTabs = () => {
         setActiveTabId(replacementTab.id)
         return [replacementTab]
       })
+
+      setSpeechStates(keepTabId ? prev => (prev[keepTabId] ? { [keepTabId]: prev[keepTabId] } : {}) : {})
+      Object.keys(refCallbackMap.current).forEach(tabId => {
+        if (!keepTabId || tabId !== keepTabId) {
+          delete cleanupMap.current[tabId]
+          delete webviewRefs.current[tabId]
+          delete refCallbackMap.current[tabId]
+        }
+      })
+      if (!keepTabId || speechTabIdRef.current !== keepTabId) {
+        stopAudioPlayback()
+      }
     },
-    [],
+    [stopAudioPlayback],
   )
 
   const closeTab = useCallback(
     (tabId: string) => {
-      const currentWebview = webviewRefs.current[tabId]
+      if (speechTabIdRef.current === tabId) {
+        stopAudioPlayback()
+      }
 
       setTabs(prev => {
         if (prev.length === 1) {
+          const currentWebview = webviewRefs.current[tabId]
           currentWebview?.loadURL(HOME_URL)
+          updateSpeechState(tabId, 'idle')
           setActiveTabId(tabId)
           return prev.map(tab =>
             tab.id === tabId
@@ -399,9 +517,15 @@ export const useBrowserTabs = () => {
         cleanupMap.current[tabId]?.()
         delete cleanupMap.current[tabId]
         delete webviewRefs.current[tabId]
+        delete refCallbackMap.current[tabId]
+        setSpeechStates(prev => {
+          const next = { ...prev }
+          delete next[tabId]
+          return next
+        })
       }
     },
-    [activeTabId, tabs.length],
+    [activeTabId, stopAudioPlayback, tabs.length, updateSpeechState],
   )
 
   const activateTab = useCallback((tabId: string) => {
@@ -449,6 +573,187 @@ export const useBrowserTabs = () => {
     }
   }, [getActiveWebview, syncDisplaySettings])
 
+  const getActiveTabSelectedText = useCallback(async () => {
+    const webview = getActiveWebview()
+    if (!webview) {
+      return ''
+    }
+
+    return getSelectedText(webview)
+  }, [getActiveWebview])
+
+  const toggleActiveTabSpeech = useCallback(async () => {
+    const activeId = activeTab?.id
+    const webview = getActiveWebview()
+    if (!activeId || !webview) {
+      return
+    }
+
+    const currentState = speechStates[activeId] ?? 'idle'
+    if (speechTabIdRef.current === activeId && currentState === 'playing' && speechCurrentRef.current) {
+      speechCurrentRef.current.pause()
+      updateSpeechState(activeId, 'paused')
+      return
+    }
+
+    if (speechTabIdRef.current === activeId && currentState === 'paused' && speechCurrentRef.current) {
+      try {
+        await speechCurrentRef.current.play()
+        updateSpeechState(activeId, 'playing')
+      } catch (error) {
+        console.error('Failed to resume AivisSpeech audio:', error)
+        stopAudioPlayback('unavailable')
+      }
+      return
+    }
+
+    stopAudioPlayback()
+    updateSpeechState(activeId, 'loading')
+    const requestId = speechRequestIdRef.current
+
+    const content = await extractEpisodeSpeechContent(webview)
+    if (requestId !== speechRequestIdRef.current) {
+      return
+    }
+
+    if (!content?.text) {
+      updateSpeechState(activeId, 'unavailable')
+      return
+    }
+
+    try {
+      const prepared = await window.aivisSpeech.prepare({
+        title: content.title,
+        workId: extractWorkId(webview.getURL()),
+        paragraphs: content.paragraphs,
+      })
+      if (requestId !== speechRequestIdRef.current) {
+        return
+      }
+
+      if (prepared.chunks.length === 0) {
+        updateSpeechState(activeId, 'unavailable')
+        return
+      }
+
+      speechTabIdRef.current = activeId
+      let synthesisDone = false
+
+      const playNext = () => {
+        if (requestId !== speechRequestIdRef.current) {
+          return
+        }
+        const next = speechQueueRef.current.shift()
+        if (!next) {
+          if (synthesisDone) {
+            stopAudioPlayback('idle')
+          } else {
+            // チャンク間の一時的な空き — 次の合成完了まで loading 表示
+            updateSpeechState(activeId, 'loading')
+          }
+          return
+        }
+
+        speechCurrentRef.current = next
+        if (next.dataset.paragraphIndexes) {
+          const paragraphIndexes = JSON.parse(next.dataset.paragraphIndexes) as number[]
+          if (paragraphIndexes.length > 0) {
+            void highlightSpeechParagraphs(webview, paragraphIndexes)
+          } else {
+            void clearSpeechParagraphHighlights(webview)
+          }
+        }
+
+        next.addEventListener('play', () => {
+          if (requestId === speechRequestIdRef.current && speechTabIdRef.current === activeId) {
+            updateSpeechState(activeId, 'playing')
+          }
+        })
+        next.addEventListener('pause', () => {
+          if (requestId === speechRequestIdRef.current && speechTabIdRef.current === activeId && !next.ended) {
+            updateSpeechState(activeId, 'paused')
+          }
+        })
+        next.addEventListener('error', () => {
+          if (requestId === speechRequestIdRef.current) {
+            stopAudioPlayback('unavailable')
+          }
+        })
+        next.addEventListener('ended', () => {
+          if (requestId !== speechRequestIdRef.current) {
+            return
+          }
+          speechCurrentRef.current = null
+          playNext()
+        })
+
+        next.play().catch(() => {
+          if (requestId === speechRequestIdRef.current) {
+            stopAudioPlayback('unavailable')
+          }
+        })
+      }
+
+      for (const chunk of prepared.chunks) {
+        if (requestId !== speechRequestIdRef.current) {
+          return
+        }
+
+        const result = await window.aivisSpeech.synthesizeChunk({
+          chunk: chunk.text,
+          styleId: prepared.styleId,
+          speedScale: prepared.speedScale,
+          intonationScale: prepared.intonationScale,
+        })
+        if (requestId !== speechRequestIdRef.current) {
+          return
+        }
+
+        const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`)
+        audio.preload = 'auto'
+        audio.dataset.paragraphIndexes = JSON.stringify(chunk.paragraphIndexes)
+        speechQueueRef.current.push(audio)
+
+        // 何も再生していなければすぐ再生開始
+        if (speechCurrentRef.current === null && speechTabIdRef.current === activeId) {
+          playNext()
+        }
+      }
+
+      synthesisDone = true
+      // 全合成完了時点で再生中も待機キューもなければ終了
+      if (
+        speechCurrentRef.current === null &&
+        speechQueueRef.current.length === 0 &&
+        speechTabIdRef.current === activeId &&
+        requestId === speechRequestIdRef.current
+      ) {
+        stopAudioPlayback('idle')
+      }
+    } catch (error) {
+      console.error('Failed to synthesize AivisSpeech audio:', error)
+      if (requestId === speechRequestIdRef.current) {
+        stopAudioPlayback('unavailable')
+      }
+    }
+  }, [activeTab, getActiveWebview, speechStates, stopAudioPlayback, updateSpeechState])
+
+  const stopActiveTabSpeech = useCallback(async () => {
+    const activeId = activeTab?.id
+    if (!activeId) {
+      return
+    }
+
+    const currentState = speechStates[activeId] ?? 'idle'
+    if (speechTabIdRef.current === activeId || currentState === 'loading') {
+      stopAudioPlayback()
+      updateSpeechState(activeId, 'idle')
+      return
+    }
+
+    updateSpeechState(activeId, 'idle')
+  }, [activeTab, speechStates, stopAudioPlayback, updateSpeechState])
+
   return {
     tabs,
     activeTab,
@@ -471,6 +776,10 @@ export const useBrowserTabs = () => {
     goHome,
     pageTitle: activeTab?.title ?? '',
     refreshDisplaySettings,
+    getActiveTabSelectedText,
+    speechState: activeTab ? speechStates[activeTab.id] ?? 'idle' : 'idle',
+    stopActiveTabSpeech,
+    toggleActiveTabSpeech,
     url: activeTab?.url ?? HOME_URL,
   }
 }

@@ -1,6 +1,17 @@
 export type BrowserWebview = Electron.WebviewTag
 import type { DisplaySettings } from '../type/display-settings'
 
+export interface EpisodeSpeechContent {
+  title: string
+  text: string
+  paragraphs: Array<{
+    index: number
+    text: string
+  }>
+}
+
+export type SpeechPlaybackState = 'idle' | 'loading' | 'playing' | 'paused' | 'unavailable'
+
 export const getSafePageTitle = async (webview: BrowserWebview) => {
   try {
     let title = webview.getTitle()
@@ -253,4 +264,143 @@ export const applyDisplaySettings = async (
     .catch((error: unknown) => {
       console.error('Failed to apply display settings:', error)
     })
+}
+
+export const extractEpisodeSpeechContent = async (
+  webview: BrowserWebview,
+): Promise<EpisodeSpeechContent | null> => {
+  try {
+    return await webview.executeJavaScript(`
+      (function() {
+        const episodeRoot =
+          document.querySelector('.widget-episodeBody') ||
+          document.querySelector('.widget-workEpisode') ||
+          document.querySelector('article');
+
+        if (!episodeRoot) {
+          return null;
+        }
+
+        const title =
+          document.querySelector('.widget-episodeTitle')?.textContent?.trim() ||
+          document.querySelector('h1')?.textContent?.trim() ||
+          '';
+
+        const paragraphNodes = Array.from(
+          episodeRoot.querySelectorAll('p, li, blockquote, h2, h3')
+        );
+        const paragraphs = paragraphNodes
+          .map((element, index) => {
+            element.setAttribute('data-kakuyomu-browser-speech-index', String(index));
+            return {
+              index,
+              text: element.textContent?.replace(/\\s+/g, ' ').trim() || ''
+            };
+          })
+          .filter((item) => Boolean(item.text));
+
+        const body =
+          paragraphs.length > 0
+            ? paragraphs.map((item) => item.text).join('\\n')
+            : (episodeRoot.textContent?.replace(/\\s+/g, ' ').trim() || '');
+
+        const text = [title, body].filter(Boolean).join('\\n\\n');
+        if (!text) {
+          return null;
+        }
+
+        return {
+          title,
+          text,
+          paragraphs
+        };
+      })();
+    `)
+  } catch (error) {
+    console.error('Failed to extract episode speech content:', error)
+    return null
+  }
+}
+
+export const highlightSpeechParagraphs = async (
+  webview: BrowserWebview,
+  paragraphIndexes: number[],
+): Promise<void> => {
+  try {
+    await webview.executeJavaScript(`
+      (function() {
+        const styleId = 'kakuyomu-browser-speech-highlight-style';
+        let style = document.getElementById(styleId);
+        if (!style) {
+          style = document.createElement('style');
+          style.id = styleId;
+          style.textContent = \`
+            [data-kakuyomu-browser-speech-index] {
+              transition: background-color 180ms ease, box-shadow 180ms ease;
+            }
+
+            [data-kakuyomu-browser-speech-active="true"] {
+              background: linear-gradient(180deg, rgba(253, 224, 71, 0.32), rgba(251, 191, 36, 0.22));
+              box-shadow: 0 0 0 6px rgba(253, 224, 71, 0.12);
+              border-radius: 8px;
+            }
+          \`;
+          document.head.appendChild(style);
+        }
+
+        const activeSet = new Set(${JSON.stringify(paragraphIndexes)});
+        const nodes = Array.from(document.querySelectorAll('[data-kakuyomu-browser-speech-index]'));
+
+        let firstActive = null;
+        nodes.forEach((node) => {
+          const index = Number(node.getAttribute('data-kakuyomu-browser-speech-index'));
+          const isActive = activeSet.has(index);
+          node.setAttribute('data-kakuyomu-browser-speech-active', isActive ? 'true' : 'false');
+          if (isActive && !firstActive) {
+            firstActive = node;
+          }
+        });
+
+        if (firstActive && typeof firstActive.scrollIntoView === 'function') {
+          firstActive.scrollIntoView({
+            block: 'center',
+            inline: 'nearest',
+            behavior: 'smooth'
+          });
+        }
+      })();
+    `)
+  } catch (error) {
+    console.error('Failed to highlight speech paragraphs:', error)
+  }
+}
+
+export const clearSpeechParagraphHighlights = async (webview: BrowserWebview): Promise<void> => {
+  try {
+    await webview.executeJavaScript(`
+      (function() {
+        document
+          .querySelectorAll('[data-kakuyomu-browser-speech-active="true"]')
+          .forEach((node) => node.setAttribute('data-kakuyomu-browser-speech-active', 'false'));
+      })();
+    `)
+  } catch (error) {
+    console.error('Failed to clear speech paragraph highlights:', error)
+  }
+}
+
+export const getSelectedText = async (webview: BrowserWebview): Promise<string> => {
+  try {
+    const selectedText = await webview.executeJavaScript(`
+      (function() {
+        const selection = window.getSelection();
+        return selection ? selection.toString().replace(/\\s+/g, ' ').trim() : '';
+      })();
+    `)
+
+    return typeof selectedText === 'string' ? selectedText : ''
+  } catch (error) {
+    console.error('Failed to get selected text:', error)
+    return ''
+  }
 }

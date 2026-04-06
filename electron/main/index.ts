@@ -1,9 +1,10 @@
-import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, Menu } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
 import { update } from './update'
 import type { DisplaySettings } from '../../src/type/display-settings'
 
@@ -85,6 +86,37 @@ async function createWindow() {
 }
 
 app.whenReady().then(createWindow)
+
+app.on('web-contents-created', (_, contents) => {
+  if (contents.getType() !== 'webview') {
+    return
+  }
+
+  contents.on('context-menu', (_event, params) => {
+    const selectedText = params.selectionText?.replace(/\s+/g, ' ').trim()
+    if (!selectedText || !win) {
+      return
+    }
+
+    const menu = Menu.buildFromTemplate([
+      {
+        label: 'コピー',
+        role: 'copy',
+      },
+      {
+        label: '読み辞書に追加',
+        click: () => {
+          win?.webContents.send('speech-dictionary:add-requested', {
+            text: selectedText,
+            pageUrl: params.pageURL || contents.getURL(),
+          })
+        },
+      },
+    ])
+
+    menu.popup({ window: win })
+  })
+})
 
 app.on('window-all-closed', () => {
   win = null
@@ -309,12 +341,517 @@ interface ReadingHistoryData {
 
 const readingHistoryPath = path.join(app.getPath('userData'), 'reading-history.json')
 const displaySettingsPath = path.join(app.getPath('userData'), 'display-settings.json')
+const speechCacheDir = path.join(app.getPath('userData'), 'speech-cache')
+const AIVIS_SPEECH_URL = 'http://127.0.0.1:10101'
 
 const defaultDisplaySettings: DisplaySettings = {
   adBlockEnabled: true,
   readerWidth: 'comfortable',
   readerFontSize: 'medium',
+  speechSpeed: 1.05,
+  speechIntonation: 1.15,
+  speechSpeakerUuid: null,
+  speechStyleId: null,
+  speechDictionary: [
+    { from: 'AI', to: 'エーアイ' },
+    { from: 'SNS', to: 'エスエヌエス' },
+    { from: 'VR', to: 'ブイアール' },
+    { from: 'AR', to: 'エーアール' },
+    { from: 'MMO', to: 'エムエムオー' },
+    { from: 'RPG', to: 'アールピージー' },
+    { from: 'HP', to: 'エイチピー' },
+    { from: 'MP', to: 'エムピー' },
+    { from: 'Lv', to: 'レベル' },
+    { from: 'XP', to: 'エックスピー' },
+    { from: 'YouTube', to: 'ユーチューブ' },
+    { from: 'VTuber', to: 'ブイチューバー' },
+  ],
+  speechWorkDictionaries: {},
 }
+
+interface AivisSpeakerStyle {
+  id: number
+  name: string
+}
+
+interface AivisSpeaker {
+  name: string
+  speaker_uuid: string
+  styles: AivisSpeakerStyle[]
+}
+
+interface AivisAudioQuery {
+  speedScale?: number
+  intonationScale?: number
+  [key: string]: unknown
+}
+
+interface AivisSpeechSynthesisResult {
+  audioBase64: string
+  mimeType: string
+  speakerId: number
+  speakerName: string
+  styleId: number
+  styleName: string
+}
+
+async function fetchAivis<T>(pathName: string, init?: RequestInit): Promise<T> {
+  let response: Response
+  try {
+    response = await fetch(`${AIVIS_SPEECH_URL}${pathName}`, init)
+  } catch (error) {
+    throw new Error('AivisSpeech に接続できません。アプリを起動してください。')
+  }
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(
+      `AivisSpeech request failed: ${response.status} ${response.statusText}${detail ? ` - ${detail}` : ''}`,
+    )
+  }
+
+  return response.json() as Promise<T>
+}
+
+async function fetchAivisBinary(pathName: string, init?: RequestInit): Promise<Buffer> {
+  let response: Response
+  try {
+    response = await fetch(`${AIVIS_SPEECH_URL}${pathName}`, init)
+  } catch (error) {
+    throw new Error('AivisSpeech に接続できません。アプリを起動してください。')
+  }
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(
+      `AivisSpeech request failed: ${response.status} ${response.statusText}${detail ? ` - ${detail}` : ''}`,
+    )
+  }
+
+  const arrayBuffer = await response.arrayBuffer()
+  return Buffer.from(arrayBuffer)
+}
+
+async function getAivisSpeakers(): Promise<AivisSpeaker[]> {
+  return fetchAivis<AivisSpeaker[]>('/speakers')
+}
+
+async function getDefaultAivisStyle() {
+  const speakers = await getAivisSpeakers()
+  const firstStyle = speakers[0]?.styles[0]
+  if (!speakers[0] || !firstStyle) {
+    throw new Error('No AivisSpeech speakers are available')
+  }
+
+  return {
+    speakerName: speakers[0].name,
+    styleId: firstStyle.id,
+    styleName: firstStyle.name,
+  }
+}
+
+async function getConfiguredAivisStyle() {
+  const speakers = await getAivisSpeakers()
+  const settings = loadDisplaySettings()
+  const configuredSpeaker = settings.speechSpeakerUuid
+    ? speakers.find(speaker => speaker.speaker_uuid === settings.speechSpeakerUuid)
+    : null
+  const configuredStyle = configuredSpeaker?.styles.find(style => style.id === settings.speechStyleId)
+
+  if (configuredSpeaker && configuredStyle) {
+    return {
+      speakerName: configuredSpeaker.name,
+      speakerUuid: configuredSpeaker.speaker_uuid,
+      styleId: configuredStyle.id,
+      styleName: configuredStyle.name,
+    }
+  }
+
+  const fallbackStyle = speakers[0]?.styles[0]
+  if (!speakers[0] || !fallbackStyle) {
+    throw new Error('No AivisSpeech speakers are available')
+  }
+
+  return {
+    speakerName: speakers[0].name,
+    speakerUuid: speakers[0].speaker_uuid,
+    styleId: fallbackStyle.id,
+    styleName: fallbackStyle.name,
+  }
+}
+
+function splitSpeechText(text: string, maxLength = 220): string[] {
+  const normalized = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\u3000/g, ' ')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+
+  const chunks: string[] = []
+  let current = ''
+
+  const pushCurrent = () => {
+    if (current.trim()) {
+      chunks.push(current.trim())
+      current = ''
+    }
+  }
+
+  for (const line of normalized) {
+    const sentences = line
+      .split(/(?<=[。！？!?…」』）\)])/)
+      .map(part => part.trim())
+      .filter(Boolean)
+
+    for (const sentence of sentences) {
+      if (sentence.length > maxLength) {
+        pushCurrent()
+
+        for (let index = 0; index < sentence.length; index += maxLength) {
+          chunks.push(sentence.slice(index, index + maxLength).trim())
+        }
+        continue
+      }
+
+      const candidate = current ? `${current} ${sentence}` : sentence
+      if (candidate.length > maxLength) {
+        pushCurrent()
+        current = sentence
+      } else {
+        current = candidate
+      }
+    }
+
+    pushCurrent()
+  }
+
+  pushCurrent()
+  return chunks
+}
+
+function splitSpeechParagraphs(
+  paragraphs: Array<{ index: number; text: string }>,
+  maxLength = 220,
+): Array<{ text: string; paragraphIndexes: number[] }> {
+  const chunks: Array<{ text: string; paragraphIndexes: number[] }> = []
+
+  paragraphs.forEach(paragraph => {
+    const normalized = paragraph.text.trim()
+    if (!normalized) {
+      return
+    }
+
+    const sentences = normalized
+      .split(/(?<=[。！？!?…」』）\)])/)
+      .map(part => part.trim())
+      .filter(Boolean)
+
+    let current = ''
+    const pushCurrent = () => {
+      if (!current.trim()) {
+        return
+      }
+
+      chunks.push({
+        text: current.trim(),
+        paragraphIndexes: [paragraph.index],
+      })
+      current = ''
+    }
+
+    for (const sentence of sentences) {
+      if (sentence.length > maxLength) {
+        pushCurrent()
+
+        for (let index = 0; index < sentence.length; index += maxLength) {
+          const slice = sentence.slice(index, index + maxLength).trim()
+          if (slice) {
+            chunks.push({
+              text: slice,
+              paragraphIndexes: [paragraph.index],
+            })
+          }
+        }
+        continue
+      }
+
+      const candidate = current ? `${current} ${sentence}` : sentence
+      if (candidate.length > maxLength) {
+        pushCurrent()
+        current = sentence
+      } else {
+        current = candidate
+      }
+    }
+
+    pushCurrent()
+  })
+
+  return chunks
+}
+
+function applySpeechDictionary(
+  text: string,
+  dictionary: Array<{ from: string; to: string }>,
+): string {
+  return dictionary.reduce((current, entry) => {
+    if (!entry.from) {
+      return current
+    }
+
+    return current.split(entry.from).join(entry.to)
+  }, text)
+}
+
+function normalizeSpeechText(
+  text: string,
+  dictionary: Array<{ from: string; to: string }> = [],
+): string {
+  const normalized = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\u3000/g, ' ')
+    .replace(/[《〈](.+?)[》〉]/g, '$1')
+    .replace(/｜/g, '')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[—―]/g, ' ')
+    .replace(/[…]{2,}/g, '…')
+    .replace(/[・]{2,}/g, ' ')
+    .replace(/[【】［］\[\]<>]/g, ' ')
+    .replace(/[※◆■□▼▽▲△●○◎◇]/g, ' ')
+    .replace(/[~〜]{2,}/g, ' ')
+    .replace(/[!！?？]{3,}/g, match => match.slice(0, 2))
+    .replace(/[.。]{4,}/g, '…。')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .join('\n')
+
+  return applySpeechDictionary(normalized, dictionary)
+}
+
+function buildSpeechDictionary(
+  settings: DisplaySettings,
+  workId?: string | null,
+): Array<{ from: string; to: string }> {
+  const globalDictionary = settings.speechDictionary ?? []
+  const workDictionary = workId ? settings.speechWorkDictionaries?.[workId] ?? [] : []
+  return [...globalDictionary, ...workDictionary]
+}
+
+function mergeWavBuffers(buffers: Buffer[]): Buffer {
+  if (buffers.length === 0) {
+    throw new Error('No audio buffers to merge')
+  }
+
+  if (buffers.length === 1) {
+    return buffers[0]
+  }
+
+  const headerSize = 44
+  const first = Buffer.from(buffers[0])
+  let dataSize = first.length - headerSize
+  const chunks: Buffer[] = [first]
+
+  for (let index = 1; index < buffers.length; index += 1) {
+    const buffer = buffers[index]
+    const pcmChunk = buffer.subarray(headerSize)
+    dataSize += pcmChunk.length
+    chunks.push(pcmChunk)
+  }
+
+  const merged = Buffer.concat(chunks)
+  merged.writeUInt32LE(36 + dataSize, 4)
+  merged.writeUInt32LE(dataSize, 40)
+  return merged
+}
+
+function ensureSpeechCacheDir() {
+  if (!fs.existsSync(speechCacheDir)) {
+    fs.mkdirSync(speechCacheDir, { recursive: true })
+  }
+}
+
+function getSpeechCachePath(payload: {
+  chunk: string
+  styleId: number
+  speedScale: number
+  intonationScale: number
+}) {
+  const cacheKey = createHash('sha1')
+    .update(
+      JSON.stringify({
+        version: 1,
+        chunk: payload.chunk,
+        styleId: payload.styleId,
+        speedScale: payload.speedScale,
+        intonationScale: payload.intonationScale,
+      }),
+    )
+    .digest('hex')
+
+  return path.join(speechCacheDir, `${cacheKey}.wav`)
+}
+
+ipcMain.handle(
+  'aivis-speech:prepare',
+  async (_, payload: { title?: string; paragraphs: Array<{ index: number; text: string }>; workId?: string | null }) => {
+    const displaySettings = loadDisplaySettings()
+    const dictionary = buildSpeechDictionary(displaySettings, payload.workId)
+    const normalizedParagraphs = (payload.paragraphs ?? [])
+      .map(paragraph => ({
+        index: paragraph.index,
+        text: normalizeSpeechText(paragraph.text, dictionary),
+      }))
+      .filter(paragraph => Boolean(paragraph.text))
+
+    const title = normalizeSpeechText(payload.title ?? '', dictionary)
+    if (!title && normalizedParagraphs.length === 0) {
+      throw new Error('Text is required for AivisSpeech synthesis')
+    }
+
+    const { speakerName, speakerUuid, styleId, styleName } = await getConfiguredAivisStyle()
+    const chunks = [
+      ...(title
+        ? [
+            {
+              text: title,
+              paragraphIndexes: [],
+            },
+          ]
+        : []),
+      ...splitSpeechParagraphs(normalizedParagraphs),
+    ]
+    return {
+      chunks,
+      styleId,
+      speakerUuid,
+      speakerName,
+      styleName,
+      speedScale: displaySettings.speechSpeed,
+      intonationScale: displaySettings.speechIntonation,
+    }
+  },
+)
+
+ipcMain.handle(
+  'aivis-speech:synthesize-chunk',
+  async (_, payload: { chunk: string; styleId: number; speedScale: number; intonationScale: number }) => {
+    const { chunk, styleId, speedScale, intonationScale } = payload
+    const cachePath = getSpeechCachePath({
+      chunk,
+      styleId,
+      speedScale,
+      intonationScale,
+    })
+
+    try {
+      if (fs.existsSync(cachePath)) {
+        const cachedBuffer = fs.readFileSync(cachePath)
+        return {
+          audioBase64: cachedBuffer.toString('base64'),
+          mimeType: 'audio/wav',
+          cached: true,
+        }
+      }
+    } catch (error) {
+      console.error('Failed to read speech cache:', error)
+    }
+
+    const audioQuery = await fetchAivis<AivisAudioQuery>(
+      `/audio_query?text=${encodeURIComponent(chunk)}&speaker=${styleId}`,
+      { method: 'POST' },
+    )
+    audioQuery.speedScale = speedScale
+    audioQuery.intonationScale = intonationScale
+
+    const audioBuffer = await fetchAivisBinary(`/synthesis?speaker=${styleId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(audioQuery),
+    })
+
+    try {
+      ensureSpeechCacheDir()
+      fs.writeFileSync(cachePath, audioBuffer)
+    } catch (error) {
+      console.error('Failed to write speech cache:', error)
+    }
+
+    return {
+      audioBase64: audioBuffer.toString('base64'),
+      mimeType: 'audio/wav',
+      cached: false,
+    }
+  },
+)
+
+ipcMain.handle('aivis-speech:get-speakers', async () => {
+  const speakers = await getAivisSpeakers()
+  return speakers.map(speaker => ({
+    name: speaker.name,
+    speakerUuid: speaker.speaker_uuid,
+    styles: speaker.styles.map(style => ({
+      id: style.id,
+      name: style.name,
+    })),
+  }))
+})
+
+ipcMain.handle(
+  'aivis-speech:synthesize',
+  async (_, payload: { text: string; title?: string; workId?: string | null }): Promise<AivisSpeechSynthesisResult> => {
+    const displaySettings = loadDisplaySettings()
+    const dictionary = buildSpeechDictionary(displaySettings, payload.workId)
+    const text = normalizeSpeechText(payload.text ?? '', dictionary)
+    if (!text) {
+      throw new Error('Text is required for AivisSpeech synthesis')
+    }
+
+    const { speakerName, styleId, styleName } = await getConfiguredAivisStyle()
+    const chunks = splitSpeechText(text)
+    if (chunks.length === 0) {
+      throw new Error('AivisSpeech に渡せる本文がありません')
+    }
+
+    const audioBuffers: Buffer[] = []
+    for (const chunk of chunks) {
+      const audioQuery = await fetchAivis<AivisAudioQuery>(
+        `/audio_query?text=${encodeURIComponent(chunk)}&speaker=${styleId}`,
+        {
+          method: 'POST',
+        },
+      )
+
+      audioQuery.speedScale = displaySettings.speechSpeed
+      audioQuery.intonationScale = displaySettings.speechIntonation
+
+      const audioBuffer = await fetchAivisBinary(`/synthesis?speaker=${styleId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(audioQuery),
+      })
+      audioBuffers.push(audioBuffer)
+    }
+
+    const audioBuffer = mergeWavBuffers(audioBuffers)
+
+    return {
+      audioBase64: audioBuffer.toString('base64'),
+      mimeType: 'audio/wav',
+      speakerId: styleId,
+      speakerName,
+      styleId,
+      styleName,
+    }
+  },
+)
 
 function loadDisplaySettings(): DisplaySettings {
   try {
