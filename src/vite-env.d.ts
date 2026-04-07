@@ -35,6 +35,8 @@ declare global {
     styleName: string
     speedScale: number
     intonationScale: number
+    pitchScale: number
+    engineBaseUrl: string
   }
 
   interface AivisSpeechChunkResult {
@@ -56,14 +58,50 @@ declare global {
             index: number
             text: string
           }>
+          startParagraphIndex?: number
         },
       ) => Promise<AivisSpeechPrepareResult>
-      synthesizeChunk: (payload: { chunk: string; styleId: number; speedScale: number; intonationScale: number }) => Promise<AivisSpeechChunkResult>
+      synthesizeChunk: (payload: { chunk: string; styleId: number; speedScale: number; intonationScale: number; pitchScale: number; engineBaseUrl: string }) => Promise<AivisSpeechChunkResult>
     }
     speechDictionary: {
       onAddRequest: (
         callback: (payload: { text: string; pageUrl: string }) => void,
       ) => () => void
+    }
+    profiles: {
+      list: () => Promise<Array<{ id: string; name: string; createdAt: number }>>
+      getActive: () => Promise<{ id: string; name: string; createdAt: number }>
+      create: (name: string) => Promise<{ id: string; name: string; createdAt: number }>
+      rename: (id: string, name: string) => Promise<{ id: string; name: string; createdAt: number }>
+      delete: (id: string) => Promise<boolean>
+      switch: (id: string) => Promise<void>
+    }
+    keyboardShortcuts: {
+      get: () => Promise<Record<string, { key: string; ctrl?: boolean; alt?: boolean; shift?: boolean } | null>>
+      update: (shortcuts: Record<string, unknown>) => Promise<Record<string, { key: string; ctrl?: boolean; alt?: boolean; shift?: boolean } | null>>
+      reset: () => Promise<Record<string, { key: string; ctrl?: boolean; alt?: boolean; shift?: boolean } | null>>
+    }
+    backup: {
+      export: () => Promise<{ success: boolean; filePath?: string }>
+      import: () => Promise<{ success: boolean; error?: string }>
+    }
+    kakuyomu: {
+      getFollowings: () => Promise<Array<{
+        id: string
+        title: string
+        authorName: string
+        url: string
+        totalEpisodes: number | null
+        latestEpisodeTitle: string | null
+        latestEpisodeUrl: string | null
+        latestEpisodeAt: string | null
+      }>>
+      getAuthorNotes: (workId: string) => Promise<Array<{
+        id: string
+        title: string
+        body: string
+        createdAt: string | null
+      }>>
     }
   }
 

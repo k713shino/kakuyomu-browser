@@ -159,6 +159,12 @@
   margin-bottom: 18px;
 }
 
+.display-settings-speech-engine {
+  margin-top: 18px;
+  margin-bottom: 0;
+  grid-template-columns: 1fr;
+}
+
 .display-settings-select-row {
   display: flex;
   flex-direction: column;

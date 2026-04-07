@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { KeyboardShortcutMap, ShortcutKey } from './type/keyboard-shortcuts'
 import { About } from './components/About/About'
 import { BrowserHeader } from './components/BrowserHeader'
 import { BrowserPane } from './components/BrowserPane'
@@ -14,6 +15,7 @@ import './App.css'
 function App() {
   const quickLinksRef = useRef<QuickLinksDropdownHandle>(null)
   const sidebarRef = useRef<QuickLinksSidebarHandle>(null)
+  const [shortcuts, setShortcuts] = useState<KeyboardShortcutMap | null>(null)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isAboutOpen, setIsAboutOpen] = useState(false)
@@ -50,7 +52,30 @@ function App() {
     cancelAutoRead,
   } = useBrowserTabs()
 
+  // ショートカットを非同期で読み込む
   useEffect(() => {
+    window.keyboardShortcuts.get().then(setShortcuts).catch(() => {})
+  }, [])
+
+  const matchesShortcut = useCallback((event: KeyboardEvent, shortcut: ShortcutKey | null | undefined): boolean => {
+    if (!shortcut) {
+      return false
+    }
+
+    return (
+      event.key.toLowerCase() === shortcut.key.toLowerCase() &&
+      !!event.ctrlKey === !!shortcut.ctrl &&
+      !!event.altKey === !!shortcut.alt &&
+      !!event.shiftKey === !!shortcut.shift &&
+      !event.metaKey
+    )
+  }, [])
+
+  useEffect(() => {
+    if (!shortcuts) {
+      return
+    }
+
     const isTypingTarget = (target: EventTarget | null) => {
       if (!(target instanceof HTMLElement)) {
         return false
@@ -70,53 +95,32 @@ function App() {
         return
       }
 
-      if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
-        if (event.key === 'ArrowLeft') {
-          event.preventDefault()
-          goBack()
-          return
+      if (matchesShortcut(event, shortcuts.goBack)) {
+        event.preventDefault()
+        goBack()
+      } else if (matchesShortcut(event, shortcuts.goForward)) {
+        event.preventDefault()
+        goForward()
+      } else if (matchesShortcut(event, shortcuts.reload)) {
+        event.preventDefault()
+        reload()
+      } else if (matchesShortcut(event, shortcuts.openHistory)) {
+        event.preventDefault()
+        setIsHistoryOpen(true)
+      } else if (matchesShortcut(event, shortcuts.toggleSidebar)) {
+        event.preventDefault()
+        setIsSidebarOpen(prev => !prev)
+      } else if (matchesShortcut(event, shortcuts.newTab)) {
+        event.preventDefault()
+        createNewTab()
+      } else if (matchesShortcut(event, shortcuts.closeTab)) {
+        event.preventDefault()
+        if (activeTabId) {
+          closeTab(activeTabId)
         }
-
-        if (event.key === 'ArrowRight') {
-          event.preventDefault()
-          goForward()
-          return
-        }
-      }
-
-      if (event.ctrlKey && !event.altKey && !event.metaKey) {
-        const key = event.key.toLowerCase()
-
-        if (key === 'r') {
-          event.preventDefault()
-          reload()
-          return
-        }
-
-        if (key === 'h') {
-          event.preventDefault()
-          setIsHistoryOpen(true)
-          return
-        }
-
-        if (key === 'b') {
-          event.preventDefault()
-          setIsSidebarOpen(prev => !prev)
-          return
-        }
-
-        if (key === 't') {
-          event.preventDefault()
-          createNewTab()
-          return
-        }
-
-        if (key === 'w') {
-          event.preventDefault()
-          if (activeTabId) {
-            closeTab(activeTabId)
-          }
-        }
+      } else if (matchesShortcut(event, shortcuts.toggleSpeech)) {
+        event.preventDefault()
+        void toggleActiveTabSpeech()
       }
     }
 
@@ -124,7 +128,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [activeTabId, closeTab, createNewTab, goBack, goForward, reload])
+  }, [activeTabId, closeTab, createNewTab, goBack, goForward, matchesShortcut, reload, shortcuts, toggleActiveTabSpeech])
 
   useEffect(() => {
     const unsubscribe = window.speechDictionary.onAddRequest(({ text }) => {

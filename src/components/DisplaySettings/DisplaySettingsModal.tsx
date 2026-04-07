@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Type, X, RectangleHorizontal, Text, AudioLines, BookOpenCheck } from 'lucide-react'
 import { extractWorkId, isKakuyomuWorkUrl } from '../../lib/browser'
-import type { DisplaySettings, ReaderFontSize, ReaderWidth } from '../../type/display-settings'
+import type { DisplaySettings, ReaderFontSize, ReaderWidth, SpeechEngine } from '../../type/display-settings'
 import './DisplaySettingsModal.css'
 
 interface DisplaySettingsModalProps {
@@ -42,6 +42,9 @@ export function DisplaySettingsModal({
     readerFontSize: 'medium',
     speechSpeed: 1.05,
     speechIntonation: 1.15,
+    speechVolume: 1.0,
+    speechPitch: 0.0,
+    speechEngine: 'auto',
     speechSpeakerUuid: null,
     speechStyleId: null,
     speechDictionary: [],
@@ -115,6 +118,19 @@ export function DisplaySettingsModal({
       const nextSettings = await window.displaySettings.update(partial)
       setSettings(nextSettings)
       await onChange()
+      // エンジンが変わったらスピーカー一覧を即座に再取得する
+      if ('speechEngine' in partial) {
+        try {
+          setIsSpeechLoading(true)
+          const nextSpeakers = await window.aivisSpeech.getSpeakers()
+          setSpeakers(nextSpeakers)
+        } catch (error) {
+          console.error('Failed to reload speakers after engine change:', error)
+          setSpeakers([])
+        } finally {
+          setIsSpeechLoading(false)
+        }
+      }
     } catch (error) {
       console.error('Failed to update display settings:', error)
     }
@@ -463,6 +479,60 @@ export function DisplaySettingsModal({
                   <span>抑揚強め</span>
                 </div>
               </div>
+              <div className="display-settings-slider-row">
+                <div className="display-settings-slider-label">
+                  <span>音量</span>
+                  <span className="display-settings-slider-value">{Math.round(settings.speechVolume * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.0"
+                  max="1.0"
+                  step="0.05"
+                  title="音量"
+                  value={settings.speechVolume}
+                  onChange={event => void updateSettings({ speechVolume: parseFloat(event.target.value) })}
+                />
+                <div className="display-settings-slider-ticks">
+                  <span>小</span>
+                  <span>標準</span>
+                  <span>大</span>
+                </div>
+              </div>
+              <div className="display-settings-slider-row">
+                <div className="display-settings-slider-label">
+                  <span>ピッチ補正</span>
+                  <span className="display-settings-slider-value">{(settings.speechPitch >= 0 ? '+' : '') + settings.speechPitch.toFixed(2)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="-0.15"
+                  max="0.15"
+                  step="0.01"
+                  title="ピッチ補正"
+                  value={settings.speechPitch}
+                  onChange={event => void updateSettings({ speechPitch: parseFloat(event.target.value) })}
+                />
+                <div className="display-settings-slider-ticks">
+                  <span>低め</span>
+                  <span>標準(0)</span>
+                  <span>高め</span>
+                </div>
+              </div>
+            </div>
+            <div className="display-settings-speech-selects display-settings-speech-engine">
+              <label className="display-settings-select-row">
+                <span>読み上げエンジン</span>
+                <select
+                  value={settings.speechEngine}
+                  onChange={event => void updateSettings({ speechEngine: event.target.value as SpeechEngine })}
+                >
+                  <option value="auto">自動（AivisSpeech → VOICEVOX → システム TTS）</option>
+                  <option value="aivis">AivisSpeech のみ</option>
+                  <option value="voicevox">VOICEVOX のみ</option>
+                  <option value="webspeech">システム TTS（WebSpeech）</option>
+                </select>
+              </label>
             </div>
             <div className="display-settings-dictionary">
               <div className="display-settings-dictionary-header">

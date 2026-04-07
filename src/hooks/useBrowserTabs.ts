@@ -118,6 +118,9 @@ export const useBrowserTabs = () => {
   const speechQueueRef = useRef<HTMLAudioElement[]>([])
   const speechTabIdRef = useRef<string | null>(null)
   const speechRequestIdRef = useRef(0)
+  const speechCurrentParagraphRef = useRef<number | null>(null)
+  const speechEngineRef = useRef<'idle' | 'aivis' | 'webspeech'>('idle')
+  const speechIsCompletedRef = useRef(false)
   const autoReadIntervalMap = useRef<Record<string, ReturnType<typeof setInterval> | null>>({})
   const autoReadPendingRef = useRef<{
     tabId: string
@@ -195,6 +198,11 @@ export const useBrowserTabs = () => {
 
     speechQueueRef.current.forEach(audio => { audio.src = '' })
     speechQueueRef.current = []
+
+    if (speechEngineRef.current === 'webspeech') {
+      window.speechSynthesis.cancel()
+    }
+    speechEngineRef.current = 'idle'
 
     if (activeSpeechTabId) {
       const activeWebview = webviewRefs.current[activeSpeechTabId]
@@ -390,6 +398,20 @@ export const useBrowserTabs = () => {
     }
   }, [])
 
+  const saveSpeechPosition = useCallback(async (webview: BrowserWebview, paragraphIndex: number | null) => {
+    try {
+      const currentUrl = webview.getURL()
+      const workId = extractWorkId(currentUrl)
+      if (!workId) {
+        return
+      }
+
+      await window.readingHistory.updateSpeechPosition(workId, paragraphIndex, currentUrl)
+    } catch (error) {
+      console.error('Failed to save speech position:', error)
+    }
+  }, [])
+
   const bindWebview = useCallback(
     (tabId: string, webview: BrowserWebview) => {
       const syncNavigationState = () => {
@@ -415,6 +437,12 @@ export const useBrowserTabs = () => {
         stopAutoReadWatcher(tabId)
         syncNavigationState()
         if (speechTabIdRef.current === tabId) {
+          // ナビゲート前に読み上げ位置を保存（自然終了でない場合のみ）
+          if (!speechIsCompletedRef.current && speechCurrentParagraphRef.current !== null) {
+            void saveSpeechPosition(webview, speechCurrentParagraphRef.current)
+          }
+          speechCurrentParagraphRef.current = null
+          speechIsCompletedRef.current = false
           stopAudioPlayback()
         } else {
           updateSpeechState(tabId, 'idle')
@@ -470,6 +498,7 @@ export const useBrowserTabs = () => {
       markEpisodeAsCompleted,
       restoreScrollPosition,
       saveReadingHistory,
+      saveSpeechPosition,
       startAutoReadWatcher,
       stopAutoReadWatcher,
       syncDisplaySettings,
@@ -765,13 +794,29 @@ export const useBrowserTabs = () => {
     }
 
     const currentState = speechStates[activeId] ?? 'idle'
-    if (speechTabIdRef.current === activeId && currentState === 'playing' && speechCurrentRef.current) {
+
+    // --- AivisSpeech: 一時停止 ---
+    if (speechTabIdRef.current === activeId && currentState === 'playing' && speechCurrentRef.current && speechEngineRef.current === 'aivis') {
       speechCurrentRef.current.pause()
       updateSpeechState(activeId, 'paused')
+      if (speechCurrentParagraphRef.current !== null) {
+        void saveSpeechPosition(webview, speechCurrentParagraphRef.current)
+      }
       return
     }
 
-    if (speechTabIdRef.current === activeId && currentState === 'paused' && speechCurrentRef.current) {
+    // --- WebSpeech: 一時停止 ---
+    if (speechTabIdRef.current === activeId && currentState === 'playing' && speechEngineRef.current === 'webspeech') {
+      window.speechSynthesis.pause()
+      updateSpeechState(activeId, 'paused')
+      if (speechCurrentParagraphRef.current !== null) {
+        void saveSpeechPosition(webview, speechCurrentParagraphRef.current)
+      }
+      return
+    }
+
+    // --- AivisSpeech: 再開 ---
+    if (speechTabIdRef.current === activeId && currentState === 'paused' && speechCurrentRef.current && speechEngineRef.current === 'aivis') {
       try {
         await speechCurrentRef.current.play()
         updateSpeechState(activeId, 'playing')
@@ -782,8 +827,18 @@ export const useBrowserTabs = () => {
       return
     }
 
+    // --- WebSpeech: 再開 ---
+    if (speechTabIdRef.current === activeId && currentState === 'paused' && speechEngineRef.current === 'webspeech') {
+      window.speechSynthesis.resume()
+      updateSpeechState(activeId, 'playing')
+      return
+    }
+
+    // --- 新規開始 ---
     stopAudioPlayback()
     updateSpeechState(activeId, 'loading')
+    speechIsCompletedRef.current = false
+    speechCurrentParagraphRef.current = null
     const requestId = speechRequestIdRef.current
 
     const content = await extractEpisodeSpeechContent(webview)
@@ -796,11 +851,117 @@ export const useBrowserTabs = () => {
       return
     }
 
+    // 設定を取得
+    let settings: { speechSpeed: number; speechIntonation: number; speechVolume: number; speechPitch: number; speechEngine: string }
+    try {
+      settings = await window.displaySettings.get()
+    } catch (error) {
+      console.error('Failed to load display settings for speech:', error)
+      updateSpeechState(activeId, 'unavailable')
+      return
+    }
+    if (requestId !== speechRequestIdRef.current) {
+      return
+    }
+
+    // 保存済みの読み上げ位置を確認
+    const currentUrl = webview.getURL()
+    const workId = extractWorkId(currentUrl)
+    let startParagraphIndex: number | undefined
+    if (workId) {
+      try {
+        const history = await window.readingHistory.getHistory()
+        const historyItem = history.find(item => item.id === workId)
+        if (
+          historyItem?.speechEpisodeUrl === currentUrl &&
+          historyItem.speechParagraphIndex !== undefined
+        ) {
+          startParagraphIndex = historyItem.speechParagraphIndex
+        }
+      } catch (error) {
+        console.error('Failed to load speech position:', error)
+      }
+    }
+    if (requestId !== speechRequestIdRef.current) {
+      return
+    }
+
+    // --- WebSpeech 再生 ---
+    const playWithWebSpeech = () => {
+      const paragraphs = startParagraphIndex !== undefined
+        ? content.paragraphs.filter(p => p.index >= startParagraphIndex!)
+        : content.paragraphs
+
+      if (paragraphs.length === 0) {
+        updateSpeechState(activeId, 'unavailable')
+        return
+      }
+
+      speechTabIdRef.current = activeId
+      speechEngineRef.current = 'webspeech'
+      window.speechSynthesis.cancel()
+
+      let localRequestId = requestId
+      const checkCancelled = () => localRequestId !== speechRequestIdRef.current
+
+      paragraphs.forEach((paragraph, index) => {
+        const utterance = new SpeechSynthesisUtterance(paragraph.text)
+        utterance.lang = 'ja-JP'
+        utterance.rate = settings.speechSpeed
+        utterance.volume = settings.speechVolume
+        // speechPitch は VOICEVOX 互換のオフセット値（-0.15〜0.15）。
+        // WebSpeech の pitch は 0〜2 の乗数（1.0 が標準）なので変換する。
+        utterance.pitch = Math.max(0, Math.min(2, 1.0 + settings.speechPitch / 0.15))
+
+        utterance.onstart = () => {
+          if (checkCancelled()) {
+            return
+          }
+          speechCurrentParagraphRef.current = paragraph.index
+          updateSpeechState(activeId, 'playing')
+          void highlightSpeechParagraphs(webview, [paragraph.index])
+        }
+
+        utterance.onend = () => {
+          if (checkCancelled()) {
+            return
+          }
+          if (index === paragraphs.length - 1) {
+            // 全段落読み終わり
+            speechIsCompletedRef.current = true
+            speechCurrentParagraphRef.current = null
+            if (workId) {
+              void window.readingHistory.updateSpeechPosition(workId, null, currentUrl)
+            }
+            stopAudioPlayback('idle')
+          }
+        }
+
+        utterance.onerror = (event) => {
+          if (checkCancelled() || event.error === 'interrupted' || event.error === 'canceled') {
+            return
+          }
+          console.error('WebSpeech error:', event.error)
+          stopAudioPlayback('unavailable')
+        }
+
+        window.speechSynthesis.speak(utterance)
+      })
+    }
+
+    // WebSpeech 固定指定の場合
+    if (settings.speechEngine === 'webspeech') {
+      playWithWebSpeech()
+      return
+    }
+
+    // --- AivisSpeech 再生（失敗時は auto なら WebSpeech へフォールバック）---
     try {
       const prepared = await window.aivisSpeech.prepare({
         title: content.title,
         workId: extractWorkId(webview.getURL()),
         paragraphs: content.paragraphs,
+        startParagraphIndex,
       })
       if (requestId !== speechRequestIdRef.current) {
         return
@@ -812,6 +973,7 @@ export const useBrowserTabs = () => {
       }
 
       speechTabIdRef.current = activeId
+      speechEngineRef.current = 'aivis'
       let synthesisDone = false
 
       const playNext = () => {
@@ -821,9 +983,14 @@ export const useBrowserTabs = () => {
         const next = speechQueueRef.current.shift()
         if (!next) {
           if (synthesisDone) {
+            // 自然終了: 位置リセット
+            speechIsCompletedRef.current = true
+            speechCurrentParagraphRef.current = null
+            if (workId) {
+              void window.readingHistory.updateSpeechPosition(workId, null, currentUrl)
+            }
             stopAudioPlayback('idle')
           } else {
-            // チャンク間の一時的な空き — 次の合成完了まで loading 表示
             updateSpeechState(activeId, 'loading')
           }
           return
@@ -833,11 +1000,15 @@ export const useBrowserTabs = () => {
         if (next.dataset.paragraphIndexes) {
           const paragraphIndexes = JSON.parse(next.dataset.paragraphIndexes) as number[]
           if (paragraphIndexes.length > 0) {
+            speechCurrentParagraphRef.current = paragraphIndexes[0]
             void highlightSpeechParagraphs(webview, paragraphIndexes)
           } else {
             void clearSpeechParagraphHighlights(webview)
           }
         }
+
+        // 音量を適用
+        next.volume = settings.speechVolume
 
         next.addEventListener('play', () => {
           if (requestId === speechRequestIdRef.current && speechTabIdRef.current === activeId) {
@@ -879,6 +1050,8 @@ export const useBrowserTabs = () => {
           styleId: prepared.styleId,
           speedScale: prepared.speedScale,
           intonationScale: prepared.intonationScale,
+          pitchScale: prepared.pitchScale,
+          engineBaseUrl: prepared.engineBaseUrl,
         })
         if (requestId !== speechRequestIdRef.current) {
           return
@@ -889,29 +1062,40 @@ export const useBrowserTabs = () => {
         audio.dataset.paragraphIndexes = JSON.stringify(chunk.paragraphIndexes)
         speechQueueRef.current.push(audio)
 
-        // 何も再生していなければすぐ再生開始
         if (speechCurrentRef.current === null && speechTabIdRef.current === activeId) {
           playNext()
         }
       }
 
       synthesisDone = true
-      // 全合成完了時点で再生中も待機キューもなければ終了
       if (
         speechCurrentRef.current === null &&
         speechQueueRef.current.length === 0 &&
         speechTabIdRef.current === activeId &&
         requestId === speechRequestIdRef.current
       ) {
+        speechIsCompletedRef.current = true
+        speechCurrentParagraphRef.current = null
+        if (workId) {
+          void window.readingHistory.updateSpeechPosition(workId, null, currentUrl)
+        }
         stopAudioPlayback('idle')
       }
     } catch (error) {
-      console.error('Failed to synthesize AivisSpeech audio:', error)
-      if (requestId === speechRequestIdRef.current) {
+      if (requestId !== speechRequestIdRef.current) {
+        return
+      }
+
+      if (settings.speechEngine === 'auto') {
+        // AivisSpeech 失敗 → WebSpeech にフォールバック
+        console.warn('AivisSpeech unavailable, falling back to WebSpeech:', error)
+        playWithWebSpeech()
+      } else {
+        console.error('Failed to synthesize AivisSpeech audio:', error)
         stopAudioPlayback('unavailable')
       }
     }
-  }, [activeTab, getActiveWebview, speechStates, stopAudioPlayback, updateSpeechState])
+  }, [activeTab, getActiveWebview, saveSpeechPosition, speechStates, stopAudioPlayback, updateSpeechState])
 
   const stopActiveTabSpeech = useCallback(async () => {
     const activeId = activeTab?.id

@@ -1,5 +1,6 @@
 export type ReaderWidth = 'compact' | 'comfortable' | 'wide'
 export type ReaderFontSize = 'small' | 'medium' | 'large'
+export type SpeechEngine = 'auto' | 'aivis' | 'voicevox' | 'webspeech'
 
 export interface DisplaySettings {
   adBlockEnabled: boolean
@@ -8,6 +9,9 @@ export interface DisplaySettings {
   readerFontSize: ReaderFontSize
   speechSpeed: number
   speechIntonation: number
+  speechVolume: number
+  speechPitch: number
+  speechEngine: SpeechEngine
   speechSpeakerUuid: string | null
   speechStyleId: number | null
   speechDictionary: Array<{

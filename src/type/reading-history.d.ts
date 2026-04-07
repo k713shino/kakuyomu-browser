@@ -11,6 +11,8 @@ export interface ReadingHistoryItem {
   firstReadAt: number // 初めて読んだ日時
   readCount: number // 読んだ回数
   scrollPosition?: number // スクロール位置（しおり機能）
+  speechParagraphIndex?: number // 読み上げ再開位置（段落インデックス）
+  speechEpisodeUrl?: string // 読み上げ位置を保存したエピソードのURL
 }
 
 export interface ReadingHistoryData {
@@ -37,6 +39,9 @@ export interface ReadingHistoryAPI {
 
   // しおり位置を更新
   updateScrollPosition: (id: string, position: number) => Promise<boolean>
+
+  // 読み上げ再開位置を更新（nullで消去）
+  updateSpeechPosition: (workId: string, paragraphIndex: number | null, episodeUrl: string) => Promise<boolean>
 }
 
 declare global {

@@ -53,6 +53,8 @@ contextBridge.exposeInMainWorld('readingHistory', {
   clearHistory: () => ipcRenderer.invoke('reading-history:clear'),
   updateScrollPosition: (id: string, position: number) =>
     ipcRenderer.invoke('reading-history:update-scroll', id, position),
+  updateSpeechPosition: (workId: string, paragraphIndex: number | null, episodeUrl: string) =>
+    ipcRenderer.invoke('reading-history:update-speech-position', workId, paragraphIndex, episodeUrl),
 })
 
 contextBridge.exposeInMainWorld('displaySettings', {
@@ -87,6 +89,31 @@ contextBridge.exposeInMainWorld('episodeCompletion', {
   isCompleted: (workId: string, episodeId: string) =>
     ipcRenderer.invoke('episode-completion:is-completed', workId, episodeId),
   clearByWorkId: (workId: string) => ipcRenderer.invoke('episode-completion:clear-by-work', workId),
+})
+
+contextBridge.exposeInMainWorld('profiles', {
+  list: () => ipcRenderer.invoke('profiles:list'),
+  getActive: () => ipcRenderer.invoke('profiles:get-active'),
+  create: (name: string) => ipcRenderer.invoke('profiles:create', name),
+  rename: (id: string, name: string) => ipcRenderer.invoke('profiles:rename', id, name),
+  delete: (id: string) => ipcRenderer.invoke('profiles:delete', id),
+  switch: (id: string) => ipcRenderer.invoke('profiles:switch', id),
+})
+
+contextBridge.exposeInMainWorld('keyboardShortcuts', {
+  get: () => ipcRenderer.invoke('keyboard-shortcuts:get'),
+  update: (shortcuts: Record<string, unknown>) => ipcRenderer.invoke('keyboard-shortcuts:update', shortcuts),
+  reset: () => ipcRenderer.invoke('keyboard-shortcuts:reset'),
+})
+
+contextBridge.exposeInMainWorld('backup', {
+  export: () => ipcRenderer.invoke('backup:export'),
+  import: () => ipcRenderer.invoke('backup:import'),
+})
+
+contextBridge.exposeInMainWorld('kakuyomu', {
+  getFollowings: () => ipcRenderer.invoke('kakuyomu:get-followings'),
+  getAuthorNotes: (workId: string) => ipcRenderer.invoke('kakuyomu:get-author-notes', workId),
 })
 
 contextBridge.exposeInMainWorld('speechDictionary', {
