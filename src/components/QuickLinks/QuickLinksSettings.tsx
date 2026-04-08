@@ -99,7 +99,7 @@ export function QuickLinksSettings({ isOpen, onClose, onUpdate, onDisplaySetting
   const [editProfileName, setEditProfileName] = useState('')
 
   // カクヨム連携
-  type KakuyomuWork = { id: string; title: string; authorName: string; url: string; totalEpisodes: number | null; latestEpisodeTitle: string | null; latestEpisodeUrl: string | null; latestEpisodeAt: string | null }
+  type KakuyomuWork = { id: string; title: string; authorName: string; authorActorId: string | null; url: string; totalEpisodes: number | null; latestEpisodeTitle: string | null; latestEpisodeUrl: string | null; latestEpisodeAt: string | null }
   type KakuyomuNote = { id: string; title: string; body: string; createdAt: string | null }
   const [followings, setFollowings] = useState<KakuyomuWork[] | null>(null)
   const [followingsLoading, setFollowingsLoading] = useState(false)
@@ -268,20 +268,25 @@ export function QuickLinksSettings({ isOpen, onClose, onUpdate, onDisplaySetting
       const works = await window.kakuyomu.getFollowings()
       setFollowings(works as KakuyomuWork[])
     } catch (error) {
-      setFollowingsError('フォロー一覧の取得に失敗しました。カクヨムにログインしているか確認してください。')
+      setFollowingsError(`取得失敗: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
       setFollowingsLoading(false)
     }
   }
 
   const loadAuthorNotes = async (work: KakuyomuWork) => {
+    if (!work.authorActorId) {
+      alert('著者の ID が取得できませんでした。')
+      return
+    }
     setSelectedWorkForNotes(work)
     setNotesLoading(true)
     setAuthorNotes([])
     try {
-      const notes = await window.kakuyomu.getAuthorNotes(work.id)
+      const notes = await window.kakuyomu.getAuthorNotes(work.authorActorId)
       setAuthorNotes(notes as KakuyomuNote[])
-    } catch {
+    } catch (error) {
+      console.error('Failed to load author notes:', error)
       setAuthorNotes([])
     } finally {
       setNotesLoading(false)
@@ -703,7 +708,7 @@ export function QuickLinksSettings({ isOpen, onClose, onUpdate, onDisplaySetting
                 )}
                 {selectedWorkForNotes && (
                   <div>
-                    <h4 className="author-notes-heading">{selectedWorkForNotes.title} の近況ノート</h4>
+                    <h4 className="author-notes-heading">{selectedWorkForNotes.authorName} の近況ノート</h4>
                     {notesLoading && <p className="settings-section-hint">取得中…</p>}
                     {!notesLoading && authorNotes.length === 0 && <div className="settings-empty-state"><p>近況ノートがありません</p></div>}
                     {authorNotes.map(note => (

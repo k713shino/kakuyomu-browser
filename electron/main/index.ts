@@ -1,5 +1,4 @@
-import { app, BrowserWindow, shell, ipcMain, Menu, dialog, session } from 'electron'
-import { createRequire } from 'node:module'
+import { app, BrowserWindow, shell, ipcMain, Menu, dialog, webContents } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
@@ -8,7 +7,6 @@ import { createHash } from 'node:crypto'
 import { update } from './update'
 import type { DisplaySettings } from '../../src/type/display-settings'
 
-const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // The built directory structure
@@ -23,7 +21,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 //
 process.env.APP_ROOT = path.join(__dirname, '../..')
 
-const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
 const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
@@ -655,32 +652,6 @@ async function fetchVoiceEngineBinary(baseUrl: string, pathName: string, init?: 
 
   const arrayBuffer = await response.arrayBuffer()
   return Buffer.from(arrayBuffer)
-}
-
-// VOICEVOX 互換エンジンのベース URL を解決する。
-// 'auto' の場合は AivisSpeech → VOICEVOX の順に試みる。
-async function resolveEngineBaseUrl(engine: string): Promise<string> {
-  if (engine === 'voicevox') {
-    return VOICEVOX_URL
-  }
-  if (engine === 'aivis') {
-    return AIVIS_SPEECH_URL
-  }
-
-  // 'auto': 応答のあった最初のエンジンを使用
-  const candidates = [AIVIS_SPEECH_URL, VOICEVOX_URL]
-  for (const url of candidates) {
-    try {
-      const speakers = await fetchVoiceEngine<AivisSpeaker[]>(url, '/speakers')
-      if (speakers.length > 0) {
-        return url
-      }
-    } catch {
-      // 次の候補へ
-    }
-  }
-
-  throw new Error('利用可能な音声エンジンが見つかりません。AivisSpeech または VOICEVOX を起動してください。')
 }
 
 // エンジン URL とスピーカー一覧を同時に取得する（auto 時の二重取得を避ける）
@@ -1335,7 +1306,7 @@ ipcMain.handle('reading-history:get', () => {
 
 ipcMain.handle('reading-history:add-or-update', (_, pageData: { url: string; title: string; scrollPosition?: number }) => {
   const data = loadReadingHistoryData()
-  const { workId, episodeId } = parseKakuyomuUrl(pageData.url)
+  const { workId } = parseKakuyomuUrl(pageData.url)
 
   if (!workId) {
     throw new Error('Invalid Kakuyomu URL')
@@ -1745,118 +1716,164 @@ ipcMain.handle('backup:import', async () => {
 
 // ─── カクヨムAPI連携 IPC ──────────────────────────────────────────────────────────
 
-async function fetchKakuyomuWithSession(url: string): Promise<string> {
-  const cookies = await session.defaultSession.cookies.get({ domain: 'kakuyomu.jp' })
-  const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ')
-
-  const response = await fetch(url, {
-    headers: {
-      'Cookie': cookieHeader,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml',
-      'Accept-Language': 'ja,en;q=0.9',
-    },
+// カクヨムが開いている webview を探して JavaScript を実行する。
+// webview はアプリのブラウザセッションを直接持つため、ログイン Cookie が自動的に使われる。
+async function executeInKakuyomuWebview(js: string): Promise<unknown> {
+  const allWc = webContents.getAllWebContents()
+  const wc = allWc.find(c => {
+    try { return c.getURL().includes('kakuyomu.jp') } catch { return false }
   })
-
-  if (!response.ok) {
-    throw new Error(`Kakuyomu fetch failed: ${response.status}`)
+  if (!wc) {
+    throw new Error('カクヨムのタブが開いていません。ブラウザでカクヨムを開いてからもう一度お試しください。')
   }
-
-  return response.text()
+  return wc.executeJavaScript(js)
 }
 
-function extractNextData(html: string): Record<string, unknown> {
-  const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/)
-  if (!match) {
-    return {}
-  }
+function extractWorksFromApolloState(apolloState: Record<string, Record<string, unknown>>): unknown[] {
+  const works: unknown[] = []
+  for (const [key, value] of Object.entries(apolloState)) {
+    if (!key.startsWith('Work:') || !value || typeof value !== 'object') continue
+    const w = value as Record<string, unknown>
+    const workId = key.replace('Work:', '')
+    const latestEpRef = (w.latestEpisode as any)?.__ref as string | undefined
+    const latestEp = latestEpRef ? apolloState[latestEpRef] : null
+    const authorRef = (w.author as any)?.__ref as string | undefined
+    const author = authorRef ? apolloState[authorRef] : null
 
-  try {
-    return JSON.parse(match[1]) as Record<string, unknown>
-  } catch {
-    return {}
+    works.push({
+      id: workId,
+      title: w.title ?? '',
+      authorName: (author as any)?.activityName ?? (author as any)?.name ?? '',
+      authorActorId: (author as any)?.actorId ?? (author as any)?.name ?? null,
+      url: `https://kakuyomu.jp/works/${workId}`,
+      totalEpisodes: w.totalEpisodeCount ?? null,
+      latestEpisodeTitle: (latestEp as any)?.title ?? null,
+      latestEpisodeUrl: latestEp
+        ? `https://kakuyomu.jp/works/${workId}/episodes/${(latestEp as any)?.id ?? ''}`
+        : null,
+      latestEpisodeAt: (latestEp as any)?.publishedAt ?? null,
+    })
   }
+  return works
 }
 
-function extractApolloState(nextData: Record<string, unknown>): Record<string, Record<string, unknown>> {
+// webview 内で URL をフェッチして __NEXT_DATA__ の __APOLLO_STATE__ を返す JS スニペット
+function buildFetchApolloJs(url: string): string {
+  const escapedUrl = JSON.stringify(url)
+  return `
+(async () => {
   try {
-    const state = (nextData?.props as any)?.pageProps?.apolloState
-    return (state && typeof state === 'object') ? state as Record<string, Record<string, unknown>> : {}
-  } catch {
-    return {}
+    // 1) まずインメモリの Apollo キャッシュを確認（過去にページを開いていれば Work: エントリがある）
+    const client = window.__APOLLO_CLIENT__;
+    if (client) {
+      const memCache = client.cache.extract();
+      const hasWorks = Object.keys(memCache).some(k => k.startsWith('Work:'));
+      if (hasWorks) return JSON.stringify({ ok: true, apollo: memCache, source: 'memory' });
+    }
+
+    // 2) SSR ページを fetch して __APOLLO_STATE__ を取得
+    const r = await fetch(${escapedUrl}, {
+      credentials: 'include',
+      headers: { Accept: 'text/html,application/xhtml+xml' }
+    });
+    const html = await r.text();
+    const m = html.match(/<script id="__NEXT_DATA__" type="application\\/json">([\\s\\S]*?)<\\/script>/);
+    if (!m) return JSON.stringify({ error: 'no __NEXT_DATA__', status: r.status, finalUrl: r.url });
+    const nextData = JSON.parse(m[1]);
+    const pp = nextData?.props?.pageProps ?? {};
+    const apollo = pp.__APOLLO_STATE__ ?? pp.apolloState ?? {};
+    return JSON.stringify({
+      ok: true, apollo, page: nextData.page, source: 'ssr',
+      hasApolloClient: !!client,
+      rootQuery: apollo.ROOT_QUERY
+    });
+  } catch (e) {
+    return JSON.stringify({ error: String(e) });
   }
+})()
+`
 }
 
 ipcMain.handle('kakuyomu:get-followings', async () => {
-  try {
-    const html = await fetchKakuyomuWithSession('https://kakuyomu.jp/my/followings/works')
-    const nextData = extractNextData(html)
-    const apolloState = extractApolloState(nextData)
+  const resultStr = await executeInKakuyomuWebview(buildFetchApolloJs('https://kakuyomu.jp/my/works/following')) as string
+  const result = JSON.parse(resultStr) as { ok?: boolean; error?: string; apollo?: Record<string, Record<string, unknown>>; page?: string; status?: number; finalUrl?: string; source?: string; hasApolloClient?: boolean; rootQuery?: unknown }
 
-    // Apollo キャッシュから Work オブジェクトを抽出
-    const works: unknown[] = []
-    for (const [key, value] of Object.entries(apolloState)) {
-      if (key.startsWith('Work:') && value && typeof value === 'object') {
-        const w = value as Record<string, unknown>
-        const workId = key.replace('Work:', '')
-        const latestEpRef = (w.latestEpisode as any)?.__ref as string | undefined
-        const latestEp = latestEpRef ? apolloState[latestEpRef] : null
+  if (result.error) {
+    throw new Error(result.error)
+  }
 
-        works.push({
-          id: workId,
-          title: w.title ?? '',
-          authorName: (() => {
-            const authorRef = (w.author as any)?.__ref as string | undefined
-            const author = authorRef ? apolloState[authorRef] : null
-            return (author as any)?.activityName ?? (author as any)?.name ?? ''
-          })(),
-          url: `https://kakuyomu.jp/works/${workId}`,
-          totalEpisodes: w.totalEpisodeCount ?? null,
-          latestEpisodeTitle: (latestEp as any)?.title ?? null,
-          latestEpisodeUrl: latestEp
-            ? `https://kakuyomu.jp/works/${workId}/episodes/${(latestEp as any)?.id ?? ''}`
-            : null,
-          latestEpisodeAt: (latestEp as any)?.publishedAt ?? null,
-        })
+  const apolloState = result.apollo ?? {}
+
+  if (Object.keys(apolloState).length === 0) {
+    const hint = result.page ? ` (page: ${result.page})` : ''
+    throw new Error(`カクヨムのページデータを取得できませんでした${hint}。カクヨムにログインしているか確認してください。`)
+  }
+
+  const works = extractWorksFromApolloState(apolloState)
+
+  if (works.length === 0) {
+    // Visitor オブジェクトからユーザー名を取得して /users/{name}/following_works を試みる
+    const visitorKey = Object.keys(apolloState).find(k => k.startsWith('Visitor:'))
+    const visitor = visitorKey ? apolloState[visitorKey] : null
+    const actorId = (visitor as any)?.actorId ?? (visitor as any)?.name ?? null
+    console.log('Kakuyomu visitor:', visitor, 'actorId:', actorId)
+
+    if (actorId) {
+      const profileResultStr = await executeInKakuyomuWebview(
+        buildFetchApolloJs(`https://kakuyomu.jp/users/${actorId}/following_works`)
+      ) as string
+      const profileResult = JSON.parse(profileResultStr) as { ok?: boolean; error?: string; apollo?: Record<string, Record<string, unknown>> }
+      if (!profileResult.error && profileResult.apollo) {
+        const profileWorks = extractWorksFromApolloState(profileResult.apollo)
+        if (profileWorks.length > 0) {
+          console.log(`Kakuyomu: found ${profileWorks.length} works via profile page`)
+          return profileWorks
+        }
+        // デバッグ: プロフィールページのキーを表示
+        throw new Error(`プロフィールページでも Work: が見つかりません。actorId=${actorId} keys=${JSON.stringify(Object.keys(profileResult.apollo).slice(0, 20))}`)
       }
     }
 
-    return works
-  } catch (error) {
-    console.error('Failed to fetch Kakuyomu followings:', error)
-    throw error
+    const keys = Object.keys(apolloState).slice(0, 20)
+    throw new Error(`Work: キーが見つかりません。visitorKey=${visitorKey} actorId=${actorId} apolloKeys=${JSON.stringify(keys)}`)
   }
+
+  return works
 })
 
-ipcMain.handle('kakuyomu:get-author-notes', async (_, workId: string) => {
-  try {
-    const html = await fetchKakuyomuWithSession(`https://kakuyomu.jp/works/${workId}/author_notes`)
-    const nextData = extractNextData(html)
-    const apolloState = extractApolloState(nextData)
+// actorId = 著者の URL スラッグ（例: "kakuyomu_official"）
+ipcMain.handle('kakuyomu:get-author-notes', async (_, actorId: string) => {
+  const resultStr = await executeInKakuyomuWebview(
+    buildFetchApolloJs(`https://kakuyomu.jp/users/${actorId}/news`)
+  ) as string
+  const result = JSON.parse(resultStr) as { ok?: boolean; error?: string; apollo?: Record<string, Record<string, unknown>> }
 
-    const notes: unknown[] = []
-    for (const [key, value] of Object.entries(apolloState)) {
-      if ((key.startsWith('AuthorNote:') || key.startsWith('Note:')) && value && typeof value === 'object') {
-        const n = value as Record<string, unknown>
-        notes.push({
-          id: key.split(':')[1] ?? key,
-          title: n.title ?? n.subject ?? '（無題）',
-          body: n.body ?? n.content ?? '',
-          createdAt: n.createdAt ?? n.publishedAt ?? null,
-        })
-      }
-    }
+  if (result.error) throw new Error(result.error)
 
-    // createdAt 降順でソート
-    notes.sort((a: any, b: any) => {
-      if (!a.createdAt) return 1
-      if (!b.createdAt) return -1
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  const apolloState = result.apollo ?? {}
+
+  const notes: unknown[] = []
+
+  for (const [key, value] of Object.entries(apolloState)) {
+    // NewsEntry: または Note: などのプレフィックスを動的に探す
+    // FeatureFlag・ROOT_QUERY・Visitor・Work 以外でテキスト系フィールドを持つものをノートと判定
+    if (key.startsWith('FeatureFlag:') || key === 'ROOT_QUERY' || key.startsWith('Visitor:') || key.startsWith('Work:')) continue
+    if (!value || typeof value !== 'object') continue
+    const n = value as Record<string, unknown>
+    if (!n.title && !n.subject && !n.body && !n.content) continue
+    notes.push({
+      id: key.split(':')[1] ?? key,
+      title: n.title ?? n.subject ?? '（無題）',
+      body: n.body ?? n.content ?? '',
+      createdAt: n.createdAt ?? n.publishedAt ?? null,
     })
-
-    return notes
-  } catch (error) {
-    console.error('Failed to fetch Kakuyomu author notes:', error)
-    throw error
   }
+
+  notes.sort((a: any, b: any) => {
+    if (!a.createdAt) return 1
+    if (!b.createdAt) return -1
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  })
+
+  return notes
 })
