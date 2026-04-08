@@ -23,7 +23,7 @@ export const About = ({ isOpen, onClose }: AboutProps) => {
         <div className="about-content">
           <div className="about-section">
             <h3>バージョン情報</h3>
-            <p className="about-version">Version 0.2.0</p>
+            <p className="about-version">Version 0.3.0</p>
             <p className="about-description">
               カクヨム専用ブラウザアプリケーション
             </p>

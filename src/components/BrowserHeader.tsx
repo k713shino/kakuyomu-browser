@@ -12,6 +12,7 @@ import {
   BookOpen,
   Type,
   TextCursorInput,
+  Settings,
 } from 'lucide-react'
 import type { RefObject } from 'react'
 import { QuickLinksDropdown } from './QuickLinks/QuickLinksDropdown'
@@ -79,103 +80,139 @@ export function BrowserHeader({
   return (
     <header className="browser-header">
       <div className="nav-controls">
-        <button
-          type="button"
-          onClick={onGoBack}
-          disabled={!canGoBack}
-          className="icon-button"
-          title="戻る"
-        >
-          <ArrowLeft size={20} />
-        </button>
-        <button
-          type="button"
-          onClick={onGoForward}
-          disabled={!canGoForward}
-          className="icon-button"
-          title="進む"
-        >
-          <ArrowRight size={20} />
-        </button>
-        <button type="button" onClick={onReload} className="icon-button" title="更新">
-          <RotateCcw size={20} />
-        </button>
-        <button type="button" onClick={onGoHome} className="icon-button" title="ホーム">
-          <Home size={20} />
-        </button>
-        <QuickLinksDropdown
-          ref={quickLinksRef}
-          onNavigate={onNavigate}
-          onOpenSettings={onOpenSettings}
-          currentUrl={currentUrl}
-          currentTitle={currentTitle}
-        />
-        <button
-          type="button"
-          onClick={onOpenDisplaySettings}
-          className="icon-button"
-          title="表示カスタマイズ"
-        >
-          <Type size={20} />
-        </button>
-        <button
-          type="button"
-          onClick={onOpenQuickDictionaryAdd}
-          className="icon-button quick-dictionary-button"
-          title="選択中の語を読み辞書に追加"
-        >
-          <TextCursorInput size={18} />
-          <span>辞書追加</span>
-        </button>
-        <button
-          type="button"
-          onClick={onToggleSidebar}
-          className={`icon-button ${isSidebarOpen ? 'is-active' : ''}`}
-          title="サイドバーを開く/閉じる"
-        >
-          <PanelRight size={20} />
-        </button>
-        <button
-          type="button"
-          onClick={onToggleSpeech}
-          className={`icon-button ${isSpeechActive ? 'is-active' : ''}`}
-          title={speechTitle}
-          disabled={isSpeechBusy}
-        >
-          {speechState === 'loading' ? (
-            <LoaderCircle size={20} className="spin" />
-          ) : speechState === 'playing' ? (
-            <Pause size={20} />
-          ) : (
-            <Play size={20} />
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={onStopSpeech}
-          className="icon-button"
-          title="読み上げを停止"
-          disabled={!isSpeechActive}
-        >
-          <Square size={18} />
-        </button>
-        <button
-          type="button"
-          onClick={onOpenHistory}
-          className="icon-button"
-          title="読書履歴"
-        >
-          <BookOpen size={20} />
-        </button>
-        <button
-          type="button"
-          onClick={onOpenAbout}
-          className="icon-button"
-          title="このアプリについて"
-        >
-          <HelpCircle size={20} />
-        </button>
+        {/* ナビゲーショングループ */}
+        <div className="nav-group">
+          <button
+            type="button"
+            onClick={onGoBack}
+            disabled={!canGoBack}
+            className="icon-button"
+            title="戻る"
+          >
+            <ArrowLeft size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={onGoForward}
+            disabled={!canGoForward}
+            className="icon-button"
+            title="進む"
+          >
+            <ArrowRight size={18} />
+          </button>
+          <button type="button" onClick={onReload} className="icon-button" title="更新">
+            <RotateCcw size={18} />
+          </button>
+          <button type="button" onClick={onGoHome} className="icon-button" title="ホーム">
+            <Home size={18} />
+          </button>
+        </div>
+
+        <div className="nav-separator" />
+
+        {/* クイックリンク & ブックマーク */}
+        <div className="nav-group">
+          <QuickLinksDropdown
+            ref={quickLinksRef}
+            onNavigate={onNavigate}
+            onOpenSettings={onOpenSettings}
+            currentUrl={currentUrl}
+            currentTitle={currentTitle}
+          />
+        </div>
+
+        <div className="nav-separator" />
+
+        {/* 表示・ツールグループ */}
+        <div className="nav-group">
+          <button
+            type="button"
+            onClick={onOpenDisplaySettings}
+            className="icon-button"
+            title="表示カスタマイズ"
+          >
+            <Type size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={onOpenQuickDictionaryAdd}
+            className="icon-button quick-dictionary-button"
+            title="選択中の語を読み辞書に追加"
+          >
+            <TextCursorInput size={16} />
+            <span>辞書追加</span>
+          </button>
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            className={`icon-button ${isSidebarOpen ? 'is-active' : ''}`}
+            title="サイドバーを開く/閉じる"
+          >
+            <PanelRight size={18} />
+          </button>
+        </div>
+
+        <div className="nav-separator" />
+
+        {/* 音声グループ */}
+        <div className="nav-group">
+          <button
+            type="button"
+            onClick={onToggleSpeech}
+            className={`icon-button ${isSpeechActive ? 'is-active' : ''}`}
+            title={speechTitle}
+            disabled={isSpeechBusy}
+          >
+            {speechState === 'loading' ? (
+              <LoaderCircle size={18} className="spin" />
+            ) : speechState === 'playing' ? (
+              <Pause size={18} />
+            ) : (
+              <Play size={18} />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={onStopSpeech}
+            className="icon-button"
+            title="読み上げを停止"
+            disabled={!isSpeechActive}
+          >
+            <Square size={16} />
+          </button>
+        </div>
+
+        <div className="nav-separator" />
+
+        {/* ユーティリティグループ */}
+        <div className="nav-group">
+          <button
+            type="button"
+            onClick={onOpenHistory}
+            className="icon-button"
+            title="読書履歴"
+          >
+            <BookOpen size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="icon-button"
+            title="設定・管理"
+          >
+            <Settings size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={onOpenAbout}
+            className="icon-button"
+            title="このアプリについて"
+          >
+            <HelpCircle size={18} />
+          </button>
+        </div>
       </div>
+
       <div className="url-bar">
         <span>{currentUrl}</span>
       </div>
