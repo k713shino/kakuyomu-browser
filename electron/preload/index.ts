@@ -116,6 +116,45 @@ contextBridge.exposeInMainWorld('kakuyomu', {
   getAuthorNotes: (workId: string) => ipcRenderer.invoke('kakuyomu:get-author-notes', workId),
 })
 
+contextBridge.exposeInMainWorld('highlights', {
+  getAll: () => ipcRenderer.invoke('highlights:get-all'),
+  getByEpisodeUrl: (episodeUrl: string) => ipcRenderer.invoke('highlights:get-by-episode', episodeUrl),
+  add: (data: any) => ipcRenderer.invoke('highlights:add', data),
+  update: (id: string, patch: any) => ipcRenderer.invoke('highlights:update', id, patch),
+  delete: (id: string) => ipcRenderer.invoke('highlights:delete', id),
+  onAddRequest: (callback: (payload: { text: string; pageUrl: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: { text: string; pageUrl: string }) => {
+      callback(payload)
+    }
+    ipcRenderer.on('highlight:add-requested', listener)
+    return () => {
+      ipcRenderer.removeListener('highlight:add-requested', listener)
+    }
+  },
+})
+
+contextBridge.exposeInMainWorld('updateChecker', {
+  runNow: () => ipcRenderer.invoke('update-checker:run-now'),
+  onCompleted: (callback: (links: unknown[]) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, links: unknown[]) => {
+      callback(links)
+    }
+    ipcRenderer.on('update-checker:completed', listener)
+    return () => {
+      ipcRenderer.removeListener('update-checker:completed', listener)
+    }
+  },
+  onNavigate: (callback: (url: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, url: string) => {
+      callback(url)
+    }
+    ipcRenderer.on('navigate-to-url', listener)
+    return () => {
+      ipcRenderer.removeListener('navigate-to-url', listener)
+    }
+  },
+})
+
 contextBridge.exposeInMainWorld('speechDictionary', {
   onAddRequest: (callback: (payload: { text: string; pageUrl: string }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: { text: string; pageUrl: string }) => {

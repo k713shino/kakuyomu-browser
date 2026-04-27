@@ -25,6 +25,8 @@ export interface DisplaySettings {
       to: string
     }>
   >
+  updateCheckEnabled: boolean
+  updateCheckIntervalHours: number
 }
 
 export interface DisplaySettingsAPI {

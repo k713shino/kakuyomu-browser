@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Type, X, RectangleHorizontal, Text, AudioLines, BookOpenCheck } from 'lucide-react'
+import { Type, X, RectangleHorizontal, Text, AudioLines, BookOpenCheck, Bell, RefreshCw } from 'lucide-react'
 import { extractWorkId, isKakuyomuWorkUrl } from '../../lib/browser'
 import type { DisplaySettings, ReaderFontSize, ReaderWidth, SpeechEngine } from '../../type/display-settings'
 import './DisplaySettingsModal.css'
@@ -49,7 +49,11 @@ export function DisplaySettingsModal({
     speechStyleId: null,
     speechDictionary: [],
     speechWorkDictionaries: {},
+    updateCheckEnabled: true,
+    updateCheckIntervalHours: 3,
   })
+  const [isCheckingNow, setIsCheckingNow] = useState(false)
+  const [lastCheckResult, setLastCheckResult] = useState<string | null>(null)
   const [speakers, setSpeakers] = useState<AivisSpeechSpeaker[]>([])
   const [isSpeechLoading, setIsSpeechLoading] = useState(false)
   const [dictionaryText, setDictionaryText] = useState('')
@@ -290,6 +294,21 @@ export function DisplaySettingsModal({
   }
 
   const currentWorkId = isKakuyomuWorkUrl(currentUrl) ? extractWorkId(currentUrl) : null
+
+  const runCheckNow = async () => {
+    setIsCheckingNow(true)
+    setLastCheckResult(null)
+    try {
+      const links = await window.updateChecker.runNow()
+      const newCount = links.filter((l: { unreadEpisodeCount?: number }) => (l.unreadEpisodeCount ?? 0) > 0).length
+      setLastCheckResult(newCount > 0 ? `${newCount}件の作品に未読話があります` : 'すべて既読です')
+    } catch (error) {
+      console.error('Update check failed:', error)
+      setLastCheckResult('チェックに失敗しました')
+    } finally {
+      setIsCheckingNow(false)
+    }
+  }
 
   if (!isOpen) return null
 
@@ -623,6 +642,55 @@ export function DisplaySettingsModal({
                   spellCheck={false}
                 />
               </div>
+            )}
+          </section>
+
+          <section className="display-settings-card">
+            <div className="display-settings-card-header">
+              <Bell size={16} />
+              <h3>更新通知</h3>
+            </div>
+            <label className="display-settings-toggle">
+              <div>
+                <strong>クイックリンクの新話を定期チェックする</strong>
+                <p>クイックリンクに登録した作品の話数を定期的に確認し、新話があればデスクトップ通知でお知らせします。</p>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.updateCheckEnabled}
+                onChange={event => void updateSettings({ updateCheckEnabled: event.target.checked })}
+              />
+            </label>
+            {settings.updateCheckEnabled && (
+              <>
+                <label className="display-settings-select-row">
+                  <span>チェック間隔</span>
+                  <select
+                    value={settings.updateCheckIntervalHours}
+                    onChange={event => void updateSettings({ updateCheckIntervalHours: parseInt(event.target.value, 10) })}
+                  >
+                    <option value={1}>1時間ごと</option>
+                    <option value={3}>3時間ごと</option>
+                    <option value={6}>6時間ごと</option>
+                    <option value={12}>12時間ごと</option>
+                    <option value={24}>24時間ごと</option>
+                  </select>
+                </label>
+                <div className="display-settings-update-check-actions">
+                  <button
+                    type="button"
+                    className="display-settings-check-now-button"
+                    onClick={() => void runCheckNow()}
+                    disabled={isCheckingNow}
+                  >
+                    <RefreshCw size={14} className={isCheckingNow ? 'spinning' : ''} />
+                    {isCheckingNow ? 'チェック中...' : '今すぐチェック'}
+                  </button>
+                  {lastCheckResult && (
+                    <span className="display-settings-check-result">{lastCheckResult}</span>
+                  )}
+                </div>
+              </>
             )}
           </section>
         </div>

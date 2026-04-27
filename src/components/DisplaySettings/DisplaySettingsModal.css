@@ -342,6 +342,52 @@
   color: #b91c1c !important;
 }
 
+.display-settings-update-check-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.display-settings-check-now-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #0ea5e9;
+  background: #fff;
+  color: #0ea5e9;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.display-settings-check-now-button:hover:not(:disabled) {
+  background: #e0f2fe;
+}
+
+.display-settings-check-now-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.display-settings-check-result {
+  font-size: 13px;
+  color: #475569;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spinning {
+  animation: spin 0.8s linear infinite;
+}
+
 @media (max-width: 640px) {
   .display-settings-header {
     flex-direction: column;

@@ -4,11 +4,14 @@ import { About } from './components/About/About'
 import { BrowserHeader } from './components/BrowserHeader'
 import { BrowserPane } from './components/BrowserPane'
 import { DisplaySettingsModal } from './components/DisplaySettings/DisplaySettingsModal'
+import { HighlightAddModal } from './components/Highlights/HighlightAddModal'
+import { HighlightsPanel } from './components/Highlights/HighlightsPanel'
 import { QuickLinksSettings } from './components/QuickLinks/QuickLinksSettings'
 import { QuickLinksSidebar } from './components/QuickLinks/QuickLinksSidebar'
 import type { QuickLinksDropdownHandle } from './components/QuickLinks/QuickLinksDropdown'
 import type { QuickLinksSidebarHandle } from './components/QuickLinks/QuickLinksSidebar'
 import { ReadingHistory } from './components/ReadingHistory/ReadingHistory'
+import { ReadingStats } from './components/ReadingStats/ReadingStats'
 import { useBrowserTabs } from './hooks/useBrowserTabs'
 import './App.css'
 
@@ -21,6 +24,10 @@ function App() {
   const [isAboutOpen, setIsAboutOpen] = useState(false)
   const [isHistoryOpen, setIsHistoryOpen] = useState(false)
   const [isDisplaySettingsOpen, setIsDisplaySettingsOpen] = useState(false)
+  const [isStatsOpen, setIsStatsOpen] = useState(false)
+  const [isHighlightsPanelOpen, setIsHighlightsPanelOpen] = useState(false)
+  const [isHighlightAddOpen, setIsHighlightAddOpen] = useState(false)
+  const [highlightAddSeed, setHighlightAddSeed] = useState<{ text: string; pageUrl: string }>({ text: '', pageUrl: '' })
   const [quickAddSeed, setQuickAddSeed] = useState<{ text: string; token: number }>({ text: '', token: 0 })
   const {
     tabs,
@@ -50,6 +57,7 @@ function App() {
     registerWebview,
     autoReadCountdown,
     cancelAutoRead,
+    injectHighlightsToActiveTab,
   } = useBrowserTabs()
 
   // ショートカットを非同期で読み込む
@@ -142,6 +150,32 @@ function App() {
     return unsubscribe
   }, [])
 
+  useEffect(() => {
+    const unsubscribe = window.highlights.onAddRequest(({ text, pageUrl }) => {
+      setHighlightAddSeed({ text, pageUrl })
+      setIsHighlightAddOpen(true)
+    })
+    return unsubscribe
+  }, [])
+
+  useEffect(() => {
+    // システム通知クリック時にナビゲート
+    const unsubscribeNavigate = window.updateChecker.onNavigate((url: string) => {
+      navigateToUrl(url)
+    })
+
+    // バックグラウンドチェック完了時にサイドバーを更新
+    const unsubscribeCompleted = window.updateChecker.onCompleted(() => {
+      quickLinksRef.current?.reload()
+      sidebarRef.current?.reload()
+    })
+
+    return () => {
+      unsubscribeNavigate()
+      unsubscribeCompleted()
+    }
+  }, [navigateToUrl])
+
   const openQuickDictionaryAdd = async () => {
     const selectedText = (await getActiveTabSelectedText()).trim()
     setQuickAddSeed({
@@ -174,6 +208,8 @@ function App() {
         onOpenAbout={() => setIsAboutOpen(true)}
         onToggleSpeech={() => void toggleActiveTabSpeech()}
         onStopSpeech={() => void stopActiveTabSpeech()}
+        onOpenStats={() => setIsStatsOpen(true)}
+        onOpenHighlights={() => setIsHighlightsPanelOpen(true)}
       />
 
       <BrowserPane
@@ -218,6 +254,23 @@ function App() {
       />
 
       <About isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
+
+      <ReadingStats isOpen={isStatsOpen} onClose={() => setIsStatsOpen(false)} />
+
+      <HighlightsPanel
+        isOpen={isHighlightsPanelOpen}
+        onClose={() => setIsHighlightsPanelOpen(false)}
+        onNavigate={navigateToUrl}
+      />
+
+      <HighlightAddModal
+        isOpen={isHighlightAddOpen}
+        selectedText={highlightAddSeed.text}
+        episodeUrl={highlightAddSeed.pageUrl}
+        pageTitle={pageTitle}
+        onClose={() => setIsHighlightAddOpen(false)}
+        onSaved={() => void injectHighlightsToActiveTab()}
+      />
 
       <ReadingHistory
         isOpen={isHistoryOpen}

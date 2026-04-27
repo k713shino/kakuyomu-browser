@@ -512,6 +512,77 @@ export const getNextEpisodeUrl = async (webview: BrowserWebview): Promise<string
   }
 }
 
+interface HighlightForInjection {
+  id: string
+  selectedText: string
+  note: string
+  color: string
+}
+
+export const injectHighlights = async (
+  webview: BrowserWebview,
+  highlights: HighlightForInjection[],
+): Promise<void> => {
+  if (highlights.length === 0) return
+  try {
+    await webview.executeJavaScript(`
+      (function(highlights) {
+        const styleId = 'kakuyomu-browser-highlight-style';
+        if (!document.getElementById(styleId)) {
+          const style = document.createElement('style');
+          style.id = styleId;
+          style.textContent = \`
+            .kb-hl { border-radius: 2px; cursor: help; padding: 0 1px; }
+            .kb-hl-yellow { background: rgba(253,224,71,0.55); }
+            .kb-hl-green  { background: rgba(134,239,172,0.55); }
+            .kb-hl-blue   { background: rgba(147,197,253,0.55); }
+            .kb-hl-pink   { background: rgba(249,168,212,0.55); }
+          \`;
+          document.head.appendChild(style);
+        }
+
+        // 既存ハイライトをクリア（テキストノードに戻す）
+        document.querySelectorAll('.kb-hl').forEach(el => {
+          const text = document.createTextNode(el.textContent || '');
+          el.parentNode && el.parentNode.replaceChild(text, el);
+        });
+
+        const root =
+          document.querySelector('.widget-episodeBody') ||
+          document.querySelector('.widget-workEpisode') ||
+          document.body;
+
+        highlights.forEach(h => {
+          if (!h.selectedText) return;
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+          let node;
+          while ((node = walker.nextNode())) {
+            const val = node.nodeValue || '';
+            const idx = val.indexOf(h.selectedText);
+            if (idx === -1) continue;
+            const parent = node.parentNode;
+            if (!parent || parent.nodeName === 'SCRIPT' || parent.nodeName === 'STYLE') continue;
+            const mark = document.createElement('mark');
+            mark.className = 'kb-hl kb-hl-' + h.color;
+            mark.setAttribute('data-hl-id', h.id);
+            if (h.note) mark.title = h.note;
+            mark.textContent = h.selectedText;
+            const before = val.slice(0, idx);
+            const after = val.slice(idx + h.selectedText.length);
+            if (before) parent.insertBefore(document.createTextNode(before), node);
+            parent.insertBefore(mark, node);
+            if (after) parent.insertBefore(document.createTextNode(after), node);
+            parent.removeChild(node);
+            break;
+          }
+        });
+      })(${JSON.stringify(highlights)});
+    `)
+  } catch (error) {
+    console.error('Failed to inject highlights:', error)
+  }
+}
+
 export const getSelectedText = async (webview: BrowserWebview): Promise<string> => {
   try {
     const selectedText = await webview.executeJavaScript(`

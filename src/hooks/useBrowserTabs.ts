@@ -10,6 +10,7 @@ import {
   getSafePageTitle,
   highlightSpeechParagraphs,
   injectAdBlocker,
+  injectHighlights,
   type SpeechPlaybackState,
 } from '../lib/webview'
 import type { BrowserWebview } from '../lib/webview'
@@ -468,6 +469,18 @@ export const useBrowserTabs = () => {
           await markEpisodeAsCompleted(webview, title)
         }
 
+        // ハイライトを注入
+        if (currentUrl.includes('/episodes/')) {
+          try {
+            const highlightItems = await window.highlights.getByEpisodeUrl(currentUrl)
+            if (highlightItems.length > 0) {
+              await injectHighlights(webview, highlightItems)
+            }
+          } catch (error) {
+            console.error('Failed to inject highlights:', error)
+          }
+        }
+
         // 連続読みウォッチャーの起動
         stopAutoReadWatcher(tabId)
         try {
@@ -784,6 +797,19 @@ export const useBrowserTabs = () => {
     }
 
     return getSelectedText(webview)
+  }, [getActiveWebview])
+
+  const injectHighlightsToActiveTab = useCallback(async () => {
+    const webview = getActiveWebview()
+    if (!webview) return
+    const currentUrl = webview.getURL()
+    if (!currentUrl.includes('/episodes/')) return
+    try {
+      const items = await window.highlights.getByEpisodeUrl(currentUrl)
+      await injectHighlights(webview, items)
+    } catch (error) {
+      console.error('Failed to inject highlights to active tab:', error)
+    }
   }, [getActiveWebview])
 
   const toggleActiveTabSpeech = useCallback(async () => {
@@ -1152,5 +1178,6 @@ export const useBrowserTabs = () => {
     url: activeTab?.url ?? HOME_URL,
     autoReadCountdown,
     cancelAutoRead,
+    injectHighlightsToActiveTab,
   }
 }

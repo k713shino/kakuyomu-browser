@@ -121,6 +121,8 @@ export function QuickLinksSettings({ isOpen, onClose, onUpdate, onDisplaySetting
     speechStyleId: null,
     speechDictionary: [],
     speechWorkDictionaries: {},
+    updateCheckEnabled: true,
+    updateCheckIntervalHours: 3,
   })
 
   useEffect(() => {

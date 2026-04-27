@@ -13,6 +13,8 @@ import {
   Type,
   TextCursorInput,
   Settings,
+  BarChart2,
+  Highlighter,
 } from 'lucide-react'
 import type { RefObject } from 'react'
 import { QuickLinksDropdown } from './QuickLinks/QuickLinksDropdown'
@@ -40,6 +42,8 @@ interface BrowserHeaderProps {
   onOpenAbout: () => void
   onToggleSpeech: () => void
   onStopSpeech: () => void
+  onOpenStats: () => void
+  onOpenHighlights: () => void
 }
 
 export function BrowserHeader({
@@ -63,6 +67,8 @@ export function BrowserHeader({
   onOpenAbout,
   onToggleSpeech,
   onStopSpeech,
+  onOpenStats,
+  onOpenHighlights,
 }: BrowserHeaderProps) {
   const isSpeechBusy = speechState === 'loading'
   const isSpeechActive = speechState === 'playing' || speechState === 'paused' || speechState === 'loading'
@@ -186,6 +192,22 @@ export function BrowserHeader({
 
         {/* ユーティリティグループ */}
         <div className="nav-group">
+          <button
+            type="button"
+            onClick={onOpenHighlights}
+            className="icon-button"
+            title="ハイライト"
+          >
+            <Highlighter size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={onOpenStats}
+            className="icon-button"
+            title="読書統計"
+          >
+            <BarChart2 size={18} />
+          </button>
           <button
             type="button"
             onClick={onOpenHistory}

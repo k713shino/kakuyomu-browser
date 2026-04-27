@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, ipcMain, Menu, dialog, webContents } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, Menu, dialog, webContents, Notification } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
@@ -82,7 +82,10 @@ async function createWindow() {
   update(win)
 }
 
-app.whenReady().then(createWindow)
+app.whenReady().then(async () => {
+  await createWindow()
+  startUpdateChecker()
+})
 
 app.on('web-contents-created', (_, contents) => {
   if (contents.getType() !== 'webview') {
@@ -99,6 +102,15 @@ app.on('web-contents-created', (_, contents) => {
       {
         label: 'コピー',
         role: 'copy',
+      },
+      {
+        label: 'ハイライト・メモを追加',
+        click: () => {
+          win?.webContents.send('highlight:add-requested', {
+            text: selectedText,
+            pageUrl: params.pageURL || contents.getURL(),
+          })
+        },
       },
       {
         label: '読み辞書に追加',
@@ -227,6 +239,10 @@ function getSpeechCacheDir() {
 
 function getKeyboardShortcutsPath() {
   return path.join(getActiveProfileDir(), 'keyboard-shortcuts.json')
+}
+
+function getHighlightsPath() {
+  return path.join(getActiveProfileDir(), 'highlights.json')
 }
 
 function loadProfilesConfig(): ProfilesConfig {
@@ -588,6 +604,8 @@ const defaultDisplaySettings: DisplaySettings = {
     { from: 'VTuber', to: 'ブイチューバー' },
   ],
   speechWorkDictionaries: {},
+  updateCheckEnabled: true,
+  updateCheckIntervalHours: 3,
 }
 
 interface AivisSpeakerStyle {
@@ -1401,11 +1419,15 @@ ipcMain.handle('display-settings:update', (_, settings: Partial<DisplaySettings>
     ...settings,
   }
   saveDisplaySettings(mergedSettings)
+  if ('updateCheckEnabled' in settings || 'updateCheckIntervalHours' in settings) {
+    startUpdateChecker()
+  }
   return mergedSettings
 })
 
 ipcMain.handle('display-settings:reset', () => {
   saveDisplaySettings(defaultDisplaySettings)
+  startUpdateChecker()
   return defaultDisplaySettings
 })
 
@@ -1546,6 +1568,108 @@ ipcMain.handle('episode-completion:clear-by-work', (_, workId: string) => {
   return false
 })
 
+// ─── バックグラウンド更新チェッカー ───────────────────────────────────────────────────
+
+let updateCheckerTimer: ReturnType<typeof setInterval> | null = null
+
+function stopUpdateChecker() {
+  if (updateCheckerTimer !== null) {
+    clearInterval(updateCheckerTimer)
+    updateCheckerTimer = null
+  }
+}
+
+async function runUpdateCheck(): Promise<QuickLink[]> {
+  const data = loadQuickLinksData()
+  const newEpisodeItems: Array<{ title: string; episodeTitle: string; episodeUrl: string }> = []
+  const nextLinks: QuickLink[] = []
+
+  for (const link of data.links) {
+    const { workId } = parseKakuyomuUrl(link.url)
+    if (!workId || !link.url.includes('/works/')) {
+      nextLinks.push(normalizeQuickLink(link))
+      continue
+    }
+
+    const prevTotal = link.totalEpisodes
+    const refreshed = await refreshQuickLinkUpdateInfo(link)
+    nextLinks.push(refreshed)
+
+    // 以前に話数が記録されていて、今回それより増えた場合のみ通知
+    if (
+      prevTotal !== null &&
+      prevTotal !== undefined &&
+      refreshed.totalEpisodes !== null &&
+      refreshed.totalEpisodes !== undefined &&
+      refreshed.totalEpisodes > prevTotal
+    ) {
+      newEpisodeItems.push({
+        title: link.title,
+        episodeTitle: refreshed.lastKnownEpisodeTitle ?? '新話が追加されました',
+        episodeUrl: refreshed.lastKnownEpisodeUrl ?? link.url,
+      })
+    }
+  }
+
+  saveQuickLinksData({ ...data, links: nextLinks })
+
+  // レンダラーに更新を通知してUIを再描画させる
+  if (win) {
+    win.webContents.send('update-checker:completed', nextLinks)
+  }
+
+  // システム通知
+  if (newEpisodeItems.length > 0 && Notification.isSupported()) {
+    if (newEpisodeItems.length === 1) {
+      const item = newEpisodeItems[0]
+      const notif = new Notification({
+        title: `${item.title} が更新されました`,
+        body: item.episodeTitle,
+      })
+      notif.on('click', () => {
+        if (win) {
+          if (win.isMinimized()) win.restore()
+          win.show()
+          win.focus()
+          win.webContents.send('navigate-to-url', item.episodeUrl)
+        }
+      })
+      notif.show()
+    } else {
+      const titles = newEpisodeItems.map(i => i.title).join('、')
+      const notif = new Notification({
+        title: `${newEpisodeItems.length}件の作品が更新されました`,
+        body: titles,
+      })
+      notif.on('click', () => {
+        if (win) {
+          if (win.isMinimized()) win.restore()
+          win.show()
+          win.focus()
+        }
+      })
+      notif.show()
+    }
+  }
+
+  return nextLinks
+}
+
+function startUpdateChecker() {
+  stopUpdateChecker()
+  const settings = loadDisplaySettings()
+  if (!settings.updateCheckEnabled) return
+
+  const intervalMs = Math.max(settings.updateCheckIntervalHours ?? 3, 1) * 60 * 60 * 1000
+  updateCheckerTimer = setInterval(() => {
+    runUpdateCheck().catch(err => console.error('Update check failed:', err))
+  }, intervalMs)
+}
+
+ipcMain.handle('update-checker:run-now', async () => {
+  return runUpdateCheck()
+})
+
 // ─── プロファイル IPC ────────────────────────────────────────────────────────────
 
 ipcMain.handle('profiles:list', () => {
@@ -1636,6 +1760,88 @@ ipcMain.handle('keyboard-shortcuts:reset', () => {
   return defaultKeyboardShortcuts
 })
 
+// ─── ハイライト ───────────────────────────────────────────────────────────────────
+
+interface HighlightEntry {
+  id: string
+  workId: string
+  episodeId: string
+  episodeUrl: string
+  workTitle: string
+  episodeTitle: string
+  selectedText: string
+  note: string
+  color: 'yellow' | 'green' | 'blue' | 'pink'
+  createdAt: number
+  updatedAt: number
+}
+
+interface HighlightsData {
+  items: HighlightEntry[]
+}
+
+function loadHighlightsData(): HighlightsData {
+  try {
+    if (fs.existsSync(getHighlightsPath())) {
+      return JSON.parse(fs.readFileSync(getHighlightsPath(), 'utf-8')) as HighlightsData
+    }
+  } catch { /* ignore */ }
+  return { items: [] }
+}
+
+function saveHighlightsData(data: HighlightsData): void {
+  try {
+    fs.writeFileSync(getHighlightsPath(), JSON.stringify(data, null, 2), 'utf-8')
+  } catch (error) {
+    console.error('Failed to save highlights:', error)
+  }
+}
+
+ipcMain.handle('highlights:get-all', () => {
+  return loadHighlightsData().items
+})
+
+ipcMain.handle('highlights:get-by-episode', (_, episodeUrl: string) => {
+  const data = loadHighlightsData()
+  return data.items.filter(h => h.episodeUrl === episodeUrl)
+})
+
+ipcMain.handle('highlights:add', (_, payload: Omit<HighlightEntry, 'id' | 'createdAt' | 'updatedAt'>) => {
+  const data = loadHighlightsData()
+  const now = Date.now()
+  const newItem: HighlightEntry = {
+    ...payload,
+    id: `hl-${now}-${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: now,
+    updatedAt: now,
+  }
+  data.items.push(newItem)
+  saveHighlightsData(data)
+  return newItem
+})
+
+ipcMain.handle('highlights:update', (_, id: string, patch: { note?: string; color?: string }) => {
+  const data = loadHighlightsData()
+  const item = data.items.find(h => h.id === id)
+  if (!item) return null
+  if (patch.note !== undefined) item.note = patch.note
+  if (patch.color !== undefined) item.color = patch.color as HighlightEntry['color']
+  item.updatedAt = Date.now()
+  saveHighlightsData(data)
+  return item
+})
+
+ipcMain.handle('highlights:delete', (_, id: string) => {
+  const data = loadHighlightsData()
+  const before = data.items.length
+  data.items = data.items.filter(h => h.id !== id)
+  if (data.items.length !== before) {
+    saveHighlightsData(data)
+    return true
+  }
+  return false
+})
+
 // ─── バックアップ/復元 IPC ─────────────────────────────────────────────────────────
 
 ipcMain.handle('backup:export', async () => {
@@ -1658,6 +1864,7 @@ ipcMain.handle('backup:export', async () => {
     readingHistory: loadReadingHistoryData(),
     episodeCompletion: loadEpisodeCompletionData(),
     keyboardShortcuts: loadKeyboardShortcuts(),
+    highlights: loadHighlightsData(),
   }
 
   fs.writeFileSync(result.filePath, JSON.stringify(bundle, null, 2), 'utf-8')
@@ -1704,6 +1911,10 @@ ipcMain.handle('backup:import', async () => {
 
     if (bundle.keyboardShortcuts) {
       saveKeyboardShortcuts({ ...defaultKeyboardShortcuts, ...bundle.keyboardShortcuts })
+    }
+
+    if (bundle.highlights) {
+      saveHighlightsData(bundle.highlights)
     }
 
     win?.reload()
